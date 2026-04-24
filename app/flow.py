@@ -132,9 +132,13 @@ def _handle_bot_started(update: dict, db: Session, max_client: MaxClient) -> Non
 
 
 def _extract_from(obj: dict) -> tuple[Optional[int], Optional[int]]:
-    """Robustly pull chat_id and user_id from any MAX update shape
-    (message_created, message_callback, bot_started).
+    """Robustly pull chat_id and user_id from any MAX update shape.
+
+    Important: in message_callback, `message.sender` is the BOT (because the
+    message with buttons was sent by the bot), so we MUST prefer callback.user
+    as the real user. For message_created, `message.sender` IS the real user.
     """
+    u_type = obj.get("update_type") or obj.get("type") or ""
     msg = obj.get("message") or {}
     recipient = msg.get("recipient") or {}
     msg_sender = msg.get("sender") or {}
@@ -147,12 +151,19 @@ def _extract_from(obj: dict) -> tuple[Optional[int], Optional[int]]:
         or obj.get("chat_id")
         or callback.get("chat_id")
     )
-    user_id = (
-        msg_sender.get("user_id") or msg_sender.get("id")
-        or cb_user.get("user_id") or cb_user.get("id")
-        or top_user.get("user_id") or top_user.get("id")
-        or obj.get("user_id")
-    )
+
+    if u_type == "message_callback":
+        user_id = (
+            cb_user.get("user_id") or cb_user.get("id")
+            or recipient.get("user_id")
+        )
+    else:
+        user_id = (
+            msg_sender.get("user_id") or msg_sender.get("id")
+            or top_user.get("user_id") or top_user.get("id")
+            or cb_user.get("user_id") or cb_user.get("id")
+            or obj.get("user_id")
+        )
     return chat_id, user_id
 
 
@@ -371,6 +382,7 @@ def _handle_callback(update: dict, db: Session, max_client: MaxClient, giga: Gig
 
 
 def _generate_and_preview(st: UserState, db: Session, max_client: MaxClient, giga: GigaChatClient) -> None:
+    # 1) текст — быстро
     try:
         text = giga.generate_text(
             TEXT_SYSTEM,
@@ -385,13 +397,23 @@ def _generate_and_preview(st: UserState, db: Session, max_client: MaxClient, gig
         log.exception("text gen failed")
         max_client.send_message(
             st.chat_id,
-            f"⚠️ GigaChat не смог сгенерировать текст ({_short(e)}). Попробуй /start ещё раз через минуту.",
+            f"⚠️ GigaChat не смог сгенерировать текст: {_short(e)}. Попробуй ещё раз через минуту или выбери другой стиль.",
         )
         return
 
     st.generated_text = text
+    st.step = "preview"
     db.commit()
 
+    occ = st.custom_occasion or OCCASION_LABELS.get(st.occasion, st.occasion)
+    style = STYLE_LABELS.get(st.style, st.style)
+    max_client.send_message(
+        st.chat_id,
+        f"📝 Черновик поздравления\n\nПовод: {occ}\nСтиль: {style}\n\n{text}",
+    )
+    max_client.send_message(st.chat_id, "🎨 Теперь рисую открытку (до минуты)...")
+
+    # 2) картинка — медленно, отдельным сообщением
     image_url: Optional[str] = None
     try:
         img = giga.generate_image(build_image_prompt(st.occasion, st.style))
@@ -401,15 +423,27 @@ def _generate_and_preview(st: UserState, db: Session, max_client: MaxClient, gig
             image_url = _host_image(db, img.binary)
     except Exception as e:
         log.warning("image gen failed: %s", e)
-        max_client.send_message(st.chat_id, "⚠️ Картинку сгенерировать не удалось, покажу только текст.")
+        max_client.send_message(
+            st.chat_id,
+            f"⚠️ Открытку не удалось сгенерировать: {_short(e)}. Текст уже готов — можно подтвердить без картинки или перегенерировать.",
+            buttons=_preview_buttons(),
+        )
+        return
 
-    st.step = "preview"
-    db.commit()
+    if image_url is None:
+        max_client.send_message(
+            st.chat_id,
+            "⚠️ GigaChat не вернул картинку. Текст готов — подтверди или попробуй перегенерировать.",
+            buttons=_preview_buttons(),
+        )
+        return
 
-    occ = st.custom_occasion or OCCASION_LABELS.get(st.occasion, st.occasion)
-    style = STYLE_LABELS.get(st.style, st.style)
-    caption = f"📝 Черновик поздравления\n\nПовод: {occ}\nСтиль: {style}\n\n{text}"
-    max_client.send_message(st.chat_id, caption, buttons=_preview_buttons(), image_url=image_url)
+    max_client.send_message(
+        st.chat_id,
+        "✅ Открытка готова:",
+        buttons=_preview_buttons(),
+        image_url=image_url,
+    )
 
 
 def _regen_text(st: UserState, db: Session, max_client: MaxClient, giga: GigaChatClient) -> None:

@@ -76,7 +76,7 @@ class GigaChatClient:
             r.raise_for_status()
             return r.json()["choices"][0]["message"]["content"].strip()
 
-    def generate_image(self, description: str) -> Optional[GigaChatImage]:
+    def generate_image(self, description: str, timeout: float = 75) -> Optional[GigaChatImage]:
         """GigaChat generates images via function_call=auto when model decides it needs one.
         We force it by asking explicitly. Returns the generated image bytes or None."""
         token = self._get_token()
@@ -84,7 +84,7 @@ class GigaChatClient:
             f"Нарисуй открытку: {description}. "
             "Без текста на изображении. Формат: квадрат 1024x1024."
         )
-        with httpx.Client(verify=False, timeout=120) as c:
+        with httpx.Client(verify=False, timeout=timeout) as c:
             r = c.post(
                 CHAT_URL,
                 headers={

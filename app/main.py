@@ -54,7 +54,7 @@ def health():
 
 @app.get("/version")
 def version():
-    return {"build": "2026-04-24-v7-image-context-fix"}
+    return {"build": "2026-04-24-v8-shorter-prompts-longer-timeout"}
 
 
 def _process_update_in_bg(update: dict) -> None:

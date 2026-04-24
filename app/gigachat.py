@@ -76,21 +76,13 @@ class GigaChatClient:
             r.raise_for_status()
             return r.json()["choices"][0]["message"]["content"].strip()
 
-    def generate_image(self, description: str, timeout: float = 75, retries: int = 1) -> Optional[GigaChatImage]:
+    def generate_image(self, description: str, timeout: float = 120, retries: int = 2) -> Optional[GigaChatImage]:
         """GigaChat generates images via function_call=auto when model decides it needs one.
-        We force it by asking explicitly. Returns the generated image bytes or None."""
+        `description` — уже готовый промпт из prompts.build_image_prompt."""
         import logging
         log = logging.getLogger("gigachat")
-
-        prompt = (
-            f"Создай изображение поздравительной открытки: {description}. "
-            "Требования: "
-            "1. Без текста и надписей на изображении. "
-            "2. Квадратный формат 1024x1024. "
-            "3. Яркая, праздничная, профессиональная композиция. "
-            "4. Используй красивую цветовую палитру. "
-            "Верни ТОЛЬКО изображение, без текстового описания."
-        )
+        # отказываемся от раздувания описания (сам build_image_prompt уже делает всё что нужно)
+        prompt = description
         http_timeout = httpx.Timeout(connect=15, read=timeout, write=30, pool=5)
 
         last_exc: Exception = RuntimeError("no attempts")

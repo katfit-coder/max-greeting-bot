@@ -340,8 +340,70 @@ def generate_recipient_seed(recipient_name: str, occasion_key: str, salt: str = 
     return int(hashlib.md5(hash_str.encode()).hexdigest()[:8], 16)
 
 
-def build_image_prompt(occasion_key: str, style_key: str, 
-                       recipient_name: str = "", 
+def build_image_prompt(occasion_key: str, style_key: str,
+                       recipient_name: str = "",
+                       recipient_info: str = "",
+                       extra_wish: str = "",
+                       custom_occasion: str = "",
+                       seed: int = None,
+                       regen_counter: int = 0) -> str:
+    """Короткая версия, чтобы GigaChat не задыхался. Макс ~200 символов.
+    Берём: один вариант описания повода + ОДИН визуальный хинт из контекста + ОДИН стиль.
+    """
+    import random as _r
+    if seed is None:
+        seed = _r.randint(1, 1_000_000) + regen_counter
+    _r.seed(seed)
+
+    # база
+    if occasion_key == "custom" and custom_occasion:
+        base = f"открытка на тему «{custom_occasion[:60]}»"
+    else:
+        variants = IMAGE_DESCRIPTIONS.get(occasion_key, ["праздничная композиция"])
+        base = _r.choice(variants) if isinstance(variants, list) else variants
+
+    # ОДИН визуальный хинт из контекста (только первое совпадение)
+    hint = ""
+    info_lower = (recipient_info or "").lower() + " " + (extra_wish or "").lower()
+    single_hints = {
+        "кофе": "чашка кофе",
+        "путешеств": "чемодан, карта мира",
+        "спорт": "спортивная атрибутика",
+        "футбол": "футбольный мяч",
+        "музык": "музыкальные ноты",
+        "книг": "стопка книг",
+        "чтени": "стопка книг",
+        "программ": "код на экране",
+        "разработ": "код на экране",
+        "дизайн": "палитра красок",
+        "игр": "игровой контроллер",
+        "кино": "кинолента",
+        "рисова": "кисти и краски",
+        "фотограф": "фотоаппарат",
+        "семь": "семейное тепло",
+        "здоров": "свежесть, солнечный свет",
+        "счасть": "радостные лица",
+        "успех": "победный жест",
+        "любов": "сердце",
+    }
+    for kw, visual in single_hints.items():
+        if kw in info_lower:
+            hint = f", рядом {visual}"
+            break
+
+    # стиль — один короткий хинт
+    style_variants = STYLE_VISUAL_VARIANTS.get(style_key, STYLE_VISUAL_VARIANTS.get("friendly", ["дружеский стиль"]))
+    style_part = _r.choice(style_variants) if isinstance(style_variants, list) else style_variants
+
+    regen_suffix = ""
+    if regen_counter > 0:
+        regen_suffix = ", другая композиция"
+
+    return f"Нарисуй поздравительную открытку: {base}{hint}. Стиль: {style_part}{regen_suffix}. Без текста на изображении, 1024x1024."
+
+
+def _build_image_prompt_OLD_UNUSED(occasion_key: str, style_key: str,
+                       recipient_name: str = "",
                        recipient_info: str = "",
                        extra_wish: str = "",
                        custom_occasion: str = "",

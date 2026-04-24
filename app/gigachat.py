@@ -53,7 +53,7 @@ class GigaChatClient:
             self._token_exp = time.time() + 1700
         return self._token
 
-    def generate_text(self, system: str, user: str, max_tokens: int = 400) -> str:
+    def generate_text(self, system: str, user: str, max_tokens: int = 700) -> str:
         token = self._get_token()
         with httpx.Client(verify=False, timeout=60) as c:
             r = c.post(

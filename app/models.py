@@ -21,8 +21,10 @@ class UserState(Base):
     occasion = Column(String, default="")
     style = Column(String, default="")
     extra_wish = Column(Text, default="")
+    recipient_info = Column(Text, default="")
     sender_name = Column(String, default="")
     recipient_name = Column(String, default="")
+    custom_occasion = Column(Text, default="")
     channel = Column(String, default="")       # max|email
     generated_text = Column(Text, default="")
     generated_image = Column(LargeBinary, nullable=True)
@@ -44,3 +46,15 @@ class SentGreeting(Base):
 
 def init_db() -> None:
     Base.metadata.create_all(bind=engine)
+    # lightweight migration: add new columns if table already exists from previous deploys
+    from sqlalchemy import text
+    new_columns = [
+        ("user_states", "recipient_info", "TEXT DEFAULT ''"),
+        ("user_states", "custom_occasion", "TEXT DEFAULT ''"),
+    ]
+    with engine.begin() as conn:
+        for table, col, ddl in new_columns:
+            try:
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}"))
+            except Exception:
+                pass  # column already exists

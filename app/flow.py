@@ -33,7 +33,21 @@ def _occasion_buttons() -> list[list[dict]]:
             current = []
     if current:
         rows.append(current)
+    rows.append([{"type": "callback", "text": "✏️ Свой повод", "payload": "occasion:custom"}])
     return rows
+
+
+def _recipient_info_buttons() -> list[list[dict]]:
+    return [[{"type": "callback", "text": "➡️ Пропустить", "payload": "skip_info"}]]
+
+
+def _after_send_buttons() -> list[list[dict]]:
+    return [
+        [
+            {"type": "callback", "text": "📤 Отправить ещё кому-то", "payload": "resend"},
+            {"type": "callback", "text": "🆕 Новое поздравление", "payload": "restart"},
+        ],
+    ]
 
 
 def _style_buttons() -> list[list[dict]]:
@@ -171,6 +185,25 @@ def _handle_message(update: dict, db: Session, max_client: MaxClient, giga: Giga
         max_client.send_message(chat_id, "Ок, отменил. Напиши /start чтобы начать заново.")
         return
 
+    if st.step == "await_custom_occasion":
+        st.occasion = "custom"
+        st.custom_occasion = text[:150]
+        st.step = "await_recipient_info"
+        db.commit()
+        max_client.send_message(
+            chat_id,
+            f"Повод: «{st.custom_occasion}».\n\nРасскажи пару слов о получателе (имя, что любит, общий контекст) — поздравление получится персональнее. Или пропусти:",
+            buttons=_recipient_info_buttons(),
+        )
+        return
+
+    if st.step == "await_recipient_info":
+        st.recipient_info = text[:400]
+        st.step = "choose_style"
+        db.commit()
+        max_client.send_message(chat_id, "Принято. Теперь выбери стиль:", buttons=_style_buttons())
+        return
+
     if st.step == "await_extra_wish":
         st.extra_wish = text[:300]
         db.commit()
@@ -217,14 +250,52 @@ def _handle_callback(update: dict, db: Session, max_client: MaxClient, giga: Gig
     max_client.answer_callback(callback_id)
 
     if payload.startswith("occasion:"):
-        st.occasion = payload.split(":", 1)[1]
-        st.step = "choose_style"
+        key = payload.split(":", 1)[1]
+        if key == "custom":
+            st.occasion = "custom"
+            st.custom_occasion = ""
+            st.step = "await_custom_occasion"
+            db.commit()
+            max_client.send_message(
+                chat_id,
+                "✏️ Напиши повод своими словами (например: «юбилей 50 лет», «получение диплома», «защита проекта»).",
+            )
+            return
+        st.occasion = key
+        st.custom_occasion = ""
+        st.step = "await_recipient_info"
         db.commit()
         max_client.send_message(
             chat_id,
-            f"Повод: {OCCASION_LABELS.get(st.occasion, st.occasion)}.\nТеперь выбери стиль:",
-            buttons=_style_buttons(),
+            f"Повод: {OCCASION_LABELS.get(st.occasion, st.occasion)}.\n\nРасскажи пару слов о получателе (имя, что любит, общий контекст) — поздравление получится персональнее. Или пропусти:",
+            buttons=_recipient_info_buttons(),
         )
+        return
+
+    if payload == "skip_info":
+        st.recipient_info = ""
+        st.step = "choose_style"
+        db.commit()
+        max_client.send_message(chat_id, "Ок, без доп. контекста. Выбери стиль:", buttons=_style_buttons())
+        return
+
+    if payload == "resend":
+        st.step = "choose_channel"
+        db.commit()
+        max_client.send_message(chat_id, "Тот же текст и открытка — куда отправить теперь?", buttons=_channel_buttons())
+        return
+
+    if payload == "restart":
+        st.step = "choose_occasion"
+        st.occasion = ""
+        st.custom_occasion = ""
+        st.style = ""
+        st.extra_wish = ""
+        st.recipient_info = ""
+        st.generated_text = ""
+        st.generated_image = None
+        db.commit()
+        max_client.send_message(chat_id, "🆕 Новое поздравление. Выбери повод:", buttons=_occasion_buttons())
         return
 
     if payload.startswith("style:"):
@@ -286,7 +357,12 @@ def _generate_and_preview(st: UserState, db: Session, max_client: MaxClient, gig
     try:
         text = giga.generate_text(
             TEXT_SYSTEM,
-            build_text_prompt(st.occasion, st.style, st.extra_wish, st.recipient_name, st.sender_name),
+            build_text_prompt(
+                st.occasion, st.style, st.extra_wish,
+                st.recipient_name, st.sender_name,
+                recipient_info=st.recipient_info or "",
+                custom_occasion=st.custom_occasion or "",
+            ),
         )
     except Exception as e:
         log.exception("text gen failed")
@@ -323,7 +399,12 @@ def _regen_text(st: UserState, db: Session, max_client: MaxClient, giga: GigaCha
     try:
         text = giga.generate_text(
             TEXT_SYSTEM,
-            build_text_prompt(st.occasion, st.style, st.extra_wish, st.recipient_name, st.sender_name),
+            build_text_prompt(
+                st.occasion, st.style, st.extra_wish,
+                st.recipient_name, st.sender_name,
+                recipient_info=st.recipient_info or "",
+                custom_occasion=st.custom_occasion or "",
+            ),
         )
     except Exception as e:
         max_client.send_message(st.chat_id, f"⚠️ Не получилось: {_short(e)}")
@@ -379,9 +460,13 @@ def _send_final(st: UserState, contact: str, db: Session, max_client: MaxClient)
         text=st.generated_text,
         has_image=1 if st.generated_image else 0,
     ))
-    st.step = "idle"
+    st.step = "after_send"
     db.commit()
-    max_client.send_message(st.chat_id, confirm + "\n\nНапиши /start чтобы отправить ещё одно.")
+    max_client.send_message(
+        st.chat_id,
+        confirm + "\n\nХочешь переслать это же поздравление ещё кому-то или собрать новое?",
+        buttons=_after_send_buttons(),
+    )
 
 
 def _short(e: Exception) -> str:

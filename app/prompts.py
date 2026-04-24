@@ -29,19 +29,35 @@ TEXT_SYSTEM = (
 
 
 def build_text_prompt(occasion_key: str, style_key: str, extra_wish: str = "",
-                      recipient_name: str = "", sender_name: str = "") -> str:
-    occasion = OCCASION_LABELS.get(occasion_key, occasion_key)
+                      recipient_name: str = "", sender_name: str = "",
+                      recipient_info: str = "", custom_occasion: str = "") -> str:
+    from datetime import datetime
+    today = datetime.now().strftime("%d.%m")
+
+    if occasion_key == "custom" and custom_occasion:
+        occasion = custom_occasion
+    else:
+        occasion = OCCASION_LABELS.get(occasion_key, occasion_key)
+
     style = STYLE_LABELS.get(style_key, style_key)
     parts = [
         f"Составь поздравление. Повод: {occasion}. Стиль: {style}.",
-        "Объём: 2–4 предложения, до 400 символов.",
+        f"Сегодняшняя дата: {today}.",
+        "Объём: 3–5 предложений, до 550 символов.",
     ]
+    if recipient_info:
+        parts.append(f"Персональный контекст о получателе (используй деликатно, если уместно): {recipient_info}.")
     if recipient_name:
         parts.append(f"Обращение к получателю: {recipient_name}.")
     if sender_name:
         parts.append(f"Подпись от: {sender_name}.")
     if extra_wish:
-        parts.append(f"Учти дополнительное пожелание пользователя: {extra_wish}")
+        parts.append(f"Учти дополнительное пожелание: {extra_wish}.")
+    parts.append(
+        "В самом конце через перенос строки одной короткой фразой упомяни, "
+        "какой ещё праздник или заметное историческое событие отмечается сегодня в России "
+        "(если такое есть), оформи как «P.S. Кстати, ...». Если ничего заметного нет — P.S. опусти."
+    )
     parts.append("Верни только чистый текст поздравления, без кавычек и пояснений.")
     return " ".join(parts)
 

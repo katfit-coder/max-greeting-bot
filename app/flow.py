@@ -1,5 +1,6 @@
 import logging
 import re
+from datetime import datetime, timedelta
 from typing import Optional
 
 from sqlalchemy.orm import Session
@@ -8,7 +9,7 @@ from app.config import settings
 from app.emailer import EmailError, send_greeting_email
 from app.gigachat import GigaChatClient
 from app.max_client import MaxClient
-from app.models import HostedImage, SentGreeting, UserState
+from app.models import HostedImage, ScheduledGreeting, SentGreeting, UserState
 from app.prompts import (
     OCCASION_LABELS,
     STYLE_LABELS,
@@ -83,12 +84,23 @@ def _preview_buttons() -> list[list[dict]]:
     ]
 
 
+def _channel_buttons_no_schedule() -> list[list[dict]]:
+    return [
+        [
+            {"type": "callback", "text": "💬 Отправить в MAX", "payload": "channel:max"},
+            {"type": "callback", "text": "✉️ На email", "payload": "channel:email"},
+        ],
+        [{"type": "callback", "text": "◀️ Отмена", "payload": "cancel"}],
+    ]
+
+
 def _channel_buttons() -> list[list[dict]]:
     return [
         [
             {"type": "callback", "text": "💬 Отправить в MAX", "payload": "channel:max"},
             {"type": "callback", "text": "✉️ На email", "payload": "channel:email"},
         ],
+        [{"type": "callback", "text": "⏰ Запланировать на дату", "payload": "schedule"}],
         [{"type": "callback", "text": "◀️ Отмена", "payload": "cancel"}],
     ]
 
@@ -202,6 +214,10 @@ def _handle_message(update: dict, db: Session, max_client: MaxClient, giga: Giga
         _show_history(st, db, max_client)
         return
 
+    if text.lower().startswith("/scheduled"):
+        _show_scheduled(st, db, max_client)
+        return
+
     if text.lower().startswith("/cancel"):
         st.step = "idle"
         db.commit()
@@ -231,6 +247,27 @@ def _handle_message(update: dict, db: Session, max_client: MaxClient, giga: Giga
         st.extra_wish = text[:300]
         db.commit()
         _generate_and_preview(st, db, max_client, giga)
+        return
+
+    if st.step == "await_schedule_datetime":
+        parsed = _parse_datetime(text)
+        if parsed is None:
+            max_client.send_message(
+                chat_id,
+                "❌ Не распознал дату. Примеры: `30.04`, `30.04 14:30`, `30.04.2027 09:00`.",
+            )
+            return
+        if parsed <= datetime.now():
+            max_client.send_message(chat_id, "❌ Дата должна быть в будущем. Введи ещё раз.")
+            return
+        st.scheduled_at = parsed
+        st.step = "choose_channel"
+        db.commit()
+        max_client.send_message(
+            chat_id,
+            f"⏰ Запланировано на {parsed.strftime('%d.%m.%Y %H:%M')}.\n\nЧерез какой канал отправить в этот момент?",
+            buttons=_channel_buttons_no_schedule(),
+        )
         return
 
     if st.step == "await_contact":
@@ -371,8 +408,24 @@ def _handle_callback(update: dict, db: Session, max_client: MaxClient, giga: Gig
 
     if payload == "cancel":
         st.step = "idle"
+        st.schedule_mode = 0
         db.commit()
         max_client.send_message(chat_id, "Отменено. /start чтобы начать заново.")
+        return
+
+    if payload == "schedule":
+        st.schedule_mode = 1
+        st.step = "await_schedule_datetime"
+        db.commit()
+        max_client.send_message(
+            chat_id,
+            "⏰ На какую дату запланировать отправку?\n\n"
+            "Форматы:\n"
+            "• `30.04` — на 30 апреля в 09:00\n"
+            "• `30.04 14:30` — на 30 апреля в 14:30\n"
+            "• `30.04.2027 09:00` — с явным годом\n\n"
+            "Дата должна быть в будущем.",
+        )
         return
 
     if payload == "history":
@@ -496,6 +549,40 @@ def _regen_image(st: UserState, db: Session, max_client: MaxClient, giga: GigaCh
 
 
 def _send_final(st: UserState, contact: str, db: Session, max_client: MaxClient) -> None:
+    # Если пользователь выбрал отложенную отправку — сохраняем, не шлём сейчас
+    if st.schedule_mode and st.scheduled_at:
+        img_id = None
+        if st.generated_image:
+            hosted = HostedImage(content=st.generated_image)
+            db.add(hosted)
+            db.flush()
+            img_id = hosted.id
+        db.add(ScheduledGreeting(
+            user_id=st.user_id,
+            chat_id=st.chat_id,
+            scheduled_at=st.scheduled_at,
+            channel=st.channel,
+            recipient_contact=contact,
+            text=st.generated_text,
+            image_id=img_id,
+            occasion=st.occasion or "",
+            custom_occasion=st.custom_occasion or "",
+            style=st.style or "",
+            recipient_info=st.recipient_info or "",
+        ))
+        st.step = "after_send"
+        st.schedule_mode = 0
+        db.commit()
+        when = st.scheduled_at.strftime("%d.%m.%Y %H:%M")
+        max_client.send_message(
+            st.chat_id,
+            f"✅ Поздравление запланировано на {when} → отправка в {('MAX' if st.channel=='max' else 'email')}: {contact}.\n\n"
+            "Оно уйдёт автоматически. Ты можешь посмотреть запланированные через /scheduled.\n\n"
+            "Хочешь ещё что-то собрать или закончить?",
+            buttons=_after_send_buttons(),
+        )
+        return
+
     try:
         if st.channel == "email":
             subject = f"Поздравление: {OCCASION_LABELS.get(st.occasion, st.occasion)}"
@@ -544,6 +631,119 @@ def _send_final(st: UserState, contact: str, db: Session, max_client: MaxClient)
 def _short(e: Exception) -> str:
     s = str(e)
     return s if len(s) < 120 else s[:117] + "..."
+
+
+_DATETIME_PATTERNS = [
+    (re.compile(r"^\s*(\d{1,2})\.(\d{1,2})\.(\d{4})\s+(\d{1,2}):(\d{2})\s*$"), "dmyt"),
+    (re.compile(r"^\s*(\d{1,2})\.(\d{1,2})\.(\d{4})\s*$"), "dmy"),
+    (re.compile(r"^\s*(\d{1,2})\.(\d{1,2})\s+(\d{1,2}):(\d{2})\s*$"), "dmt"),
+    (re.compile(r"^\s*(\d{1,2})\.(\d{1,2})\s*$"), "dm"),
+]
+
+
+def _parse_datetime(s: str) -> Optional[datetime]:
+    now = datetime.now()
+    for rx, kind in _DATETIME_PATTERNS:
+        m = rx.match(s)
+        if not m:
+            continue
+        try:
+            if kind == "dmyt":
+                d, mo, y, h, mi = map(int, m.groups())
+                return datetime(y, mo, d, h, mi)
+            if kind == "dmy":
+                d, mo, y = map(int, m.groups())
+                return datetime(y, mo, d, 9, 0)
+            if kind == "dmt":
+                d, mo, h, mi = map(int, m.groups())
+                year = now.year
+                candidate = datetime(year, mo, d, h, mi)
+                if candidate <= now:
+                    candidate = datetime(year + 1, mo, d, h, mi)
+                return candidate
+            if kind == "dm":
+                d, mo = map(int, m.groups())
+                year = now.year
+                candidate = datetime(year, mo, d, 9, 0)
+                if candidate <= now:
+                    candidate = datetime(year + 1, mo, d, 9, 0)
+                return candidate
+        except ValueError:
+            return None
+    return None
+
+
+def _show_scheduled(st: UserState, db: Session, max_client: MaxClient) -> None:
+    items = (
+        db.query(ScheduledGreeting)
+        .filter(ScheduledGreeting.user_id == st.user_id, ScheduledGreeting.status == "pending")
+        .order_by(ScheduledGreeting.scheduled_at.asc())
+        .all()
+    )
+    if not items:
+        max_client.send_message(st.chat_id, "⏰ Запланированных поздравлений нет.")
+        return
+    lines = [f"⏰ У тебя {len(items)} запланированных поздравлений:\n"]
+    for it in items:
+        occ = it.custom_occasion or OCCASION_LABELS.get(it.occasion, it.occasion or "—")
+        when = it.scheduled_at.strftime("%d.%m.%Y %H:%M")
+        ch = "MAX" if it.channel == "max" else "email"
+        lines.append(f"• {when} → {ch}: {it.recipient_contact} ({occ})")
+    max_client.send_message(st.chat_id, "\n".join(lines))
+
+
+def process_due_scheduled(db: Session, max_client: MaxClient) -> dict:
+    """Find pending ScheduledGreeting with scheduled_at <= now, send them, mark sent/failed.
+    Called on every webhook and via /admin/tick. Returns summary dict."""
+    now = datetime.now()
+    due = (
+        db.query(ScheduledGreeting)
+        .filter(ScheduledGreeting.status == "pending", ScheduledGreeting.scheduled_at <= now)
+        .all()
+    )
+    sent, failed = 0, 0
+    for item in due:
+        try:
+            if item.channel == "email":
+                img_bytes = None
+                if item.image_id:
+                    h = db.query(HostedImage).filter(HostedImage.id == item.image_id).first()
+                    if h:
+                        img_bytes = h.content
+                subject = f"Поздравление: {item.custom_occasion or OCCASION_LABELS.get(item.occasion, item.occasion or '')}"
+                send_greeting_email(item.recipient_contact, subject, item.text, img_bytes)
+            else:
+                img_url = None
+                if item.image_id:
+                    base = (settings.public_base_url or "").rstrip("/")
+                    if base:
+                        img_url = f"{base}/image/{item.image_id}.jpg"
+                max_client.send_message(int(item.recipient_contact), item.text, image_url=img_url)
+            item.status = "sent"
+            item.sent_at = now
+            sent += 1
+            # уведомляем отправителя
+            try:
+                max_client.send_message(
+                    item.chat_id,
+                    f"📤 Запланированное поздравление ({item.scheduled_at.strftime('%d.%m %H:%M')}) успешно отправлено → {item.recipient_contact}",
+                )
+            except Exception:
+                pass
+        except Exception as e:
+            item.status = "failed"
+            item.error = str(e)[:500]
+            failed += 1
+            try:
+                max_client.send_message(
+                    item.chat_id,
+                    f"⚠️ Не удалось отправить запланированное поздравление на {item.recipient_contact}: {str(e)[:150]}",
+                )
+            except Exception:
+                pass
+    if due:
+        db.commit()
+    return {"processed": len(due), "sent": sent, "failed": failed}
 
 
 def _show_history(st: UserState, db: Session, max_client: MaxClient) -> None:

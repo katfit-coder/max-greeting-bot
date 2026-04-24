@@ -17,7 +17,7 @@ class UserState(Base):
     __tablename__ = "user_states"
     user_id = Column(Integer, primary_key=True)
     chat_id = Column(Integer, nullable=False)
-    step = Column(String, default="idle")      # idle|choose_occasion|choose_style|preview|choose_channel|await_contact
+    step = Column(String, default="idle")
     occasion = Column(String, default="")
     style = Column(String, default="")
     extra_wish = Column(Text, default="")
@@ -25,10 +25,32 @@ class UserState(Base):
     sender_name = Column(String, default="")
     recipient_name = Column(String, default="")
     custom_occasion = Column(Text, default="")
-    channel = Column(String, default="")       # max|email
+    channel = Column(String, default="")
     generated_text = Column(Text, default="")
     generated_image = Column(LargeBinary, nullable=True)
+    schedule_mode = Column(Integer, default=0)
+    scheduled_at = Column(DateTime, nullable=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ScheduledGreeting(Base):
+    __tablename__ = "scheduled_greetings"
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, nullable=False, index=True)
+    chat_id = Column(Integer, nullable=False)
+    scheduled_at = Column(DateTime, nullable=False, index=True)
+    channel = Column(String, nullable=False)
+    recipient_contact = Column(String, nullable=False)
+    text = Column(Text, nullable=False)
+    image_id = Column(Integer, nullable=True)
+    occasion = Column(String, default="")
+    custom_occasion = Column(String, default="")
+    style = Column(String, default="")
+    recipient_info = Column(Text, default="")
+    status = Column(String, default="pending")   # pending | sent | failed
+    error = Column(Text, default="")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    sent_at = Column(DateTime, nullable=True)
 
 
 class HostedImage(Base):
@@ -63,6 +85,8 @@ def init_db() -> None:
     new_columns = [
         ("user_states", "recipient_info", "TEXT DEFAULT ''"),
         ("user_states", "custom_occasion", "TEXT DEFAULT ''"),
+        ("user_states", "schedule_mode", "INTEGER DEFAULT 0"),
+        ("user_states", "scheduled_at", "DATETIME"),
         ("sent_greetings", "custom_occasion", "TEXT DEFAULT ''"),
         ("sent_greetings", "recipient_info", "TEXT DEFAULT ''"),
         ("sent_greetings", "extra_wish", "TEXT DEFAULT ''"),

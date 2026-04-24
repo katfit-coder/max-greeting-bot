@@ -6,7 +6,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import Response
 
 from app.config import settings
-from app.flow import handle_update
+from app.flow import handle_update, process_due_scheduled
 from app.gigachat import GigaChatClient
 from app.max_client import MaxClient
 from app.models import HostedImage, SessionLocal, init_db
@@ -54,7 +54,7 @@ def health():
 
 @app.get("/version")
 def version():
-    return {"build": "2026-04-24-v4-history-finish-dynamic-occasions"}
+    return {"build": "2026-04-24-v5-scheduling-regional-holidays"}
 
 
 @app.post("/webhook")
@@ -68,11 +68,25 @@ async def webhook(request: Request):
     db = SessionLocal()
     try:
         handle_update(update, db, app.state.max_client, app.state.giga)
+        # параллельно обрабатываем запланированные, если есть
+        process_due_scheduled(db, app.state.max_client)
     except Exception:
         log.exception("handler error")
     finally:
         db.close()
     return {"ok": True}
+
+
+@app.post("/admin/tick")
+def admin_tick():
+    """Manually process pending scheduled greetings (can be pinged by cron-job.org every 5-10 min)."""
+    if not app.state.max_client:
+        return {"error": "MAX_BOT_TOKEN not configured"}
+    db = SessionLocal()
+    try:
+        return process_due_scheduled(db, app.state.max_client)
+    finally:
+        db.close()
 
 
 @app.get("/image/{image_id}.jpg")

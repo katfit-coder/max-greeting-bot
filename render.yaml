@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: max-greeting-bot
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: MAX_BOT_TOKEN
+        sync: false
+      - key: GIGACHAT_AUTH_KEY
+        sync: false
+      - key: GIGACHAT_SCOPE
+        value: GIGACHAT_API_PERS
+      - key: PUBLIC_BASE_URL
+        sync: false
+      - key: SMTP_HOST
+        value: smtp.yandex.ru
+      - key: SMTP_PORT
+        value: "465"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: SMTP_FROM
+        sync: false
+      - key: DATABASE_URL
+        value: sqlite:///./bot.db

@@ -54,7 +54,7 @@ def health():
 
 @app.get("/version")
 def version():
-    return {"build": "2026-04-24-v3-split-text-image"}
+    return {"build": "2026-04-24-v4-history-finish-dynamic-occasions"}
 
 
 @app.post("/webhook")

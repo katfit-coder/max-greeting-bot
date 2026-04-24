@@ -52,6 +52,11 @@ def health():
     return {"status": "ok"}
 
 
+@app.get("/version")
+def version():
+    return {"build": "2026-04-24-v3-split-text-image"}
+
+
 @app.post("/webhook")
 async def webhook(request: Request):
     update = await request.json()

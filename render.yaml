@@ -13,7 +13,7 @@ services:
       - key: GIGACHAT_AUTH_KEY
         sync: false
       - key: GIGACHAT_SCOPE
-        value: GIGACHAT_API_PERS
+        value: GIGACHAT_API_B2B
       - key: PUBLIC_BASE_URL
         sync: false
       - key: SMTP_HOST

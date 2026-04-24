@@ -64,7 +64,7 @@ class GigaChatClient:
                     "Accept": "application/json",
                 },
                 json={
-                    "model": "GigaChat",
+                    "model": "GigaChat-2-Max",
                     "messages": [
                         {"role": "system", "content": system},
                         {"role": "user", "content": user},
@@ -93,7 +93,7 @@ class GigaChatClient:
                     "Accept": "application/json",
                 },
                 json={
-                    "model": "GigaChat",
+                    "model": "GigaChat-2-Max",
                     "messages": [{"role": "user", "content": prompt}],
                     "function_call": "auto",
                 },

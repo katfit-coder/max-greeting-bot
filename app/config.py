@@ -4,7 +4,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     max_bot_token: str = ""
     gigachat_auth_key: str = ""
-    gigachat_scope: str = "GIGACHAT_API_PERS"
+    gigachat_scope: str = "GIGACHAT_API_B2B"
     smtp_host: str = ""
     smtp_port: int = 465
     smtp_user: str = ""

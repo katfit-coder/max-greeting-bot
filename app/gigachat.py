@@ -76,7 +76,7 @@ class GigaChatClient:
             r.raise_for_status()
             return r.json()["choices"][0]["message"]["content"].strip()
 
-    def generate_image(self, description: str, timeout: float = 150, retries: int = 2) -> Optional[GigaChatImage]:
+    def generate_image(self, description: str, timeout: float = 75, retries: int = 1) -> Optional[GigaChatImage]:
         """GigaChat generates images via function_call=auto when model decides it needs one.
         We force it by asking explicitly. Returns the generated image bytes or None."""
         import logging

@@ -2,7 +2,7 @@ import logging
 from collections import deque
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.responses import Response
 
 from app.config import settings
@@ -54,28 +54,36 @@ def health():
 
 @app.get("/version")
 def version():
-    return {"build": "2026-04-24-v5-scheduling-regional-holidays"}
+    return {"build": "2026-04-24-v6-async-webhook-fix"}
+
+
+def _process_update_in_bg(update: dict) -> None:
+    """Обрабатываем апдейт в отдельном потоке — чтобы webhook мог сразу вернуть 200
+    и не блокировать единственный worker на время генерации."""
+    if not app.state.max_client:
+        log.error("MAX_BOT_TOKEN not configured")
+        return
+    db = SessionLocal()
+    try:
+        handle_update(update, db, app.state.max_client, app.state.giga)
+        process_due_scheduled(db, app.state.max_client)
+    except Exception:
+        log.exception("handler error in background")
+    finally:
+        db.close()
 
 
 @app.post("/webhook")
-async def webhook(request: Request):
+async def webhook(request: Request, bg: BackgroundTasks):
     update = await request.json()
     RECENT_UPDATES.append(update)
     log.info("webhook update: type=%s", update.get("update_type"))
     if not app.state.max_client:
         log.error("MAX_BOT_TOKEN not configured; cannot handle webhook")
         return {"ok": False, "reason": "max_not_configured"}
-    if not app.state.giga:
-        log.warning("GIGACHAT_AUTH_KEY not set — /start and меню работают, генерация текста/картинки будет недоступна")
-    db = SessionLocal()
-    try:
-        handle_update(update, db, app.state.max_client, app.state.giga)
-        # параллельно обрабатываем запланированные, если есть
-        process_due_scheduled(db, app.state.max_client)
-    except Exception:
-        log.exception("handler error")
-    finally:
-        db.close()
+    # Отвечаем MAX немедленно, чтобы он не начал слать повторы.
+    # Генерация и все долгие операции — в фоне.
+    bg.add_task(_process_update_in_bg, update)
     return {"ok": True}
 
 

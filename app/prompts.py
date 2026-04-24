@@ -355,12 +355,18 @@ def build_image_prompt(occasion_key: str, style_key: str,
         seed = _r.randint(1, 1_000_000) + regen_counter
     _r.seed(seed)
 
-    # база
+    # база: явное название повода + один вариант визуальной композиции
     if occasion_key == "custom" and custom_occasion:
-        base = f"открытка на тему «{custom_occasion[:60]}»"
+        occasion_label = custom_occasion[:80]
+        variants = ["праздничная поздравительная композиция"]
     else:
+        occasion_label = OCCASION_LABELS.get(occasion_key, occasion_key)
+        # уберём эмодзи из начала лейбла для передачи в модель
+        occasion_label_clean = occasion_label.lstrip(" 🎂🎄🌷🎖💻🙏📈🏆🤝🚀☀️🕊🇷🇺🏴📚🍎📜📖🌾🎪🕌").strip()
+        occasion_label = occasion_label_clean or occasion_label
         variants = IMAGE_DESCRIPTIONS.get(occasion_key, ["праздничная композиция"])
-        base = _r.choice(variants) if isinstance(variants, list) else variants
+    visual = _r.choice(variants) if isinstance(variants, list) else variants
+    base = f"повод — {occasion_label}: {visual}"
 
     # ОДИН визуальный хинт из контекста (только первое совпадение)
     hint = ""

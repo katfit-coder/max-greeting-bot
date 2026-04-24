@@ -315,6 +315,36 @@ def _handle_callback(
     st = _get_or_create_state(db, user_id, chat_id)
     max_client.answer_callback(callback_id)
 
+    # Защита от кликов по старым кнопкам: callback должен соответствовать текущему шагу.
+    # Эти callbacks разрешены в любом состоянии (они не ломают поток):
+    universal = {"cancel", "history", "finish", "restart"}
+    # Для state-specific — проверяем ожидаемый шаг:
+    expected_step = {
+        "skip_info": {"await_recipient_info"},
+        "confirm": {"preview"},
+        "schedule": {"choose_channel"},
+        "resend": {"after_send"},
+    }
+    if payload not in universal:
+        prefix = payload.split(":", 1)[0] if ":" in payload else payload
+        step_map = {
+            "occasion": {"choose_occasion"},
+            "style": {"choose_style"},
+            "regen": {"preview"},
+            "back": {"preview"},
+            "channel": {"choose_channel"},
+        }
+        allowed = expected_step.get(payload) or step_map.get(prefix)
+        if allowed is not None and st.step not in allowed:
+            log.info("ignoring stale callback payload=%s current_step=%s expected=%s",
+                     payload, st.step, allowed)
+            max_client.send_message(
+                chat_id,
+                "⚠️ Эта кнопка из старого сообщения — она уже не актуальна.\n"
+                "Напиши /start, чтобы начать заново, или /cancel, чтобы сбросить.",
+            )
+            return
+
     if payload.startswith("occasion:"):
         key = payload.split(":", 1)[1]
         if key == "custom":

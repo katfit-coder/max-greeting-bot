@@ -119,7 +119,9 @@ def _get_or_create_state(db: Session, user_id: int, chat_id: int) -> UserState:
     return st
 
 
-def handle_update(update: dict, db: Session, max_client: MaxClient, giga: GigaChatClient) -> None:
+def handle_update(
+    update: dict, db: Session, max_client: MaxClient, giga: Optional[GigaChatClient]
+) -> None:
     u_type = update.get("update_type") or update.get("type")
     if u_type == "message_created":
         _handle_message(update, db, max_client, giga)
@@ -184,7 +186,9 @@ def _extract_from(obj: dict) -> tuple[Optional[int], Optional[int]]:
     return chat_id, user_id
 
 
-def _handle_message(update: dict, db: Session, max_client: MaxClient, giga: GigaChatClient) -> None:
+def _handle_message(
+    update: dict, db: Session, max_client: MaxClient, giga: Optional[GigaChatClient]
+) -> None:
     msg = update.get("message") or {}
     body = msg.get("body") or {}
     text = (body.get("text") or "").strip()
@@ -299,7 +303,9 @@ def _handle_message(update: dict, db: Session, max_client: MaxClient, giga: Giga
     )
 
 
-def _handle_callback(update: dict, db: Session, max_client: MaxClient, giga: GigaChatClient) -> None:
+def _handle_callback(
+    update: dict, db: Session, max_client: MaxClient, giga: Optional[GigaChatClient]
+) -> None:
     cb = update.get("callback") or {}
     payload = cb.get("payload") or ""
     callback_id = cb.get("callback_id") or ""
@@ -442,7 +448,16 @@ def _handle_callback(update: dict, db: Session, max_client: MaxClient, giga: Gig
         return
 
 
-def _generate_and_preview(st: UserState, db: Session, max_client: MaxClient, giga: GigaChatClient) -> None:
+def _generate_and_preview(
+    st: UserState, db: Session, max_client: MaxClient, giga: Optional[GigaChatClient]
+) -> None:
+    if giga is None:
+        max_client.send_message(
+            st.chat_id,
+            "⚠️ GigaChat не настроен: в окружении нет GIGACHAT_AUTH_KEY. "
+            "Добавь ключ в .env (или в Render → Environment) и перезапусти сервис.",
+        )
+        return
     # 1) текст — быстро
     try:
         text = giga.generate_text(
@@ -507,7 +522,12 @@ def _generate_and_preview(st: UserState, db: Session, max_client: MaxClient, gig
     )
 
 
-def _regen_text(st: UserState, db: Session, max_client: MaxClient, giga: GigaChatClient) -> None:
+def _regen_text(
+    st: UserState, db: Session, max_client: MaxClient, giga: Optional[GigaChatClient]
+) -> None:
+    if giga is None:
+        max_client.send_message(st.chat_id, "⚠️ GigaChat не настроен (нет GIGACHAT_AUTH_KEY).")
+        return
     try:
         text = giga.generate_text(
             TEXT_SYSTEM,
@@ -528,7 +548,12 @@ def _regen_text(st: UserState, db: Session, max_client: MaxClient, giga: GigaCha
     max_client.send_message(st.chat_id, caption, buttons=_preview_buttons(), image_url=image_url)
 
 
-def _regen_image(st: UserState, db: Session, max_client: MaxClient, giga: GigaChatClient) -> None:
+def _regen_image(
+    st: UserState, db: Session, max_client: MaxClient, giga: Optional[GigaChatClient]
+) -> None:
+    if giga is None:
+        max_client.send_message(st.chat_id, "⚠️ GigaChat не настроен (нет GIGACHAT_AUTH_KEY).")
+        return
     try:
         img = giga.generate_image(build_image_prompt(st.occasion, st.style, st.custom_occasion or ""))
     except Exception as e:

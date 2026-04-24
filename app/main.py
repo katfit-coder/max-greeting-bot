@@ -62,9 +62,11 @@ async def webhook(request: Request):
     update = await request.json()
     RECENT_UPDATES.append(update)
     log.info("webhook update: type=%s", update.get("update_type"))
-    if not app.state.max_client or not app.state.giga:
-        log.error("bot not fully configured (max=%s giga=%s)", bool(app.state.max_client), bool(app.state.giga))
-        return {"ok": False, "reason": "not_configured"}
+    if not app.state.max_client:
+        log.error("MAX_BOT_TOKEN not configured; cannot handle webhook")
+        return {"ok": False, "reason": "max_not_configured"}
+    if not app.state.giga:
+        log.warning("GIGACHAT_AUTH_KEY not set — /start and меню работают, генерация текста/картинки будет недоступна")
     db = SessionLocal()
     try:
         handle_update(update, db, app.state.max_client, app.state.giga)

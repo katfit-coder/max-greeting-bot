@@ -92,7 +92,7 @@ class MaxClient:
             r = c.post(
                 self._url("/subscriptions"),
                 headers=self._headers(),
-                json={"url": url, "update_types": ["message_created", "message_callback"]},
+                json={"url": url, "update_types": ["message_created", "message_callback", "bot_started", "bot_added"]},
             )
             return {"status": r.status_code, "body": r.text}
 

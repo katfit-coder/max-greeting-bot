@@ -93,6 +93,27 @@ def handle_update(update: dict, db: Session, max_client: MaxClient, giga: GigaCh
         _handle_message(update, db, max_client, giga)
     elif u_type == "message_callback":
         _handle_callback(update, db, max_client, giga)
+    elif u_type in ("bot_started", "bot_added"):
+        _handle_bot_started(update, db, max_client)
+    else:
+        log.info("unhandled update type: %s", u_type)
+
+
+def _handle_bot_started(update: dict, db: Session, max_client: MaxClient) -> None:
+    chat_id = update.get("chat_id") or (update.get("payload") or {}).get("chat_id")
+    user = update.get("user") or (update.get("payload") or {}).get("user") or {}
+    user_id = user.get("user_id") or user.get("id") or update.get("user_id")
+    if not chat_id or not user_id:
+        log.warning("bot_started without chat_id/user_id: %s", update)
+        return
+    st = _get_or_create_state(db, user_id, chat_id)
+    st.step = "choose_occasion"
+    db.commit()
+    max_client.send_message(
+        chat_id,
+        "👋 Привет! Я помогу собрать красивое поздравление за пару кликов.\n\nВыбери повод:",
+        buttons=_occasion_buttons(),
+    )
 
 
 def _extract_from(obj: dict) -> tuple[Optional[int], Optional[int]]:
@@ -175,9 +196,13 @@ def _handle_message(update: dict, db: Session, max_client: MaxClient, giga: Giga
         max_client.send_message(chat_id, "Команды: /start — новое поздравление · /history — последние отправки · /cancel — отмена")
         return
 
+    # любой другой текст в idle → показываем главное меню
+    st.step = "choose_occasion"
+    db.commit()
     max_client.send_message(
         chat_id,
-        "Не понял. Напиши /start чтобы начать сбор поздравления, или /history для истории.",
+        "Давай соберём поздравление. Выбери повод:",
+        buttons=_occasion_buttons(),
     )
 
 

@@ -10,13 +10,13 @@ from app.gigachat import GigaChatClient
 from app.max_client import MaxClient
 from app.models import HostedImage, SentGreeting, UserState
 from app.prompts import (
-    OCCASIONS,
     OCCASION_LABELS,
     STYLE_LABELS,
     STYLES,
     TEXT_SYSTEM,
     build_image_prompt,
     build_text_prompt,
+    current_available_occasions,
 )
 
 log = logging.getLogger("flow")
@@ -27,7 +27,7 @@ EMAIL_RE = re.compile(r"^[\w.\-+]+@[\w\-]+\.[\w.\-]+$")
 def _occasion_buttons() -> list[list[dict]]:
     rows = []
     current: list[dict] = []
-    for key, label in OCCASIONS:
+    for key, label in current_available_occasions():
         current.append({"type": "callback", "text": label, "payload": f"occasion:{key}"})
         if len(current) == 2:
             rows.append(current)
@@ -35,6 +35,7 @@ def _occasion_buttons() -> list[list[dict]]:
     if current:
         rows.append(current)
     rows.append([{"type": "callback", "text": "✏️ Свой повод", "payload": "occasion:custom"}])
+    rows.append([{"type": "callback", "text": "📜 История поздравлений", "payload": "history"}])
     return rows
 
 
@@ -47,6 +48,10 @@ def _after_send_buttons() -> list[list[dict]]:
         [
             {"type": "callback", "text": "📤 Отправить ещё кому-то", "payload": "resend"},
             {"type": "callback", "text": "🆕 Новое поздравление", "payload": "restart"},
+        ],
+        [
+            {"type": "callback", "text": "📜 История", "payload": "history"},
+            {"type": "callback", "text": "🏁 Завершить на сегодня", "payload": "finish"},
         ],
     ]
 
@@ -194,17 +199,7 @@ def _handle_message(update: dict, db: Session, max_client: MaxClient, giga: Giga
         return
 
     if text.lower().startswith("/history"):
-        items = db.query(SentGreeting).filter(SentGreeting.user_id == user_id).order_by(SentGreeting.id.desc()).limit(5).all()
-        if not items:
-            max_client.send_message(chat_id, "История пуста. Напиши /start чтобы отправить первое поздравление.")
-            return
-        lines = ["📜 Последние 5 отправленных поздравлений:\n"]
-        for i, it in enumerate(items, 1):
-            occ = OCCASION_LABELS.get(it.occasion, it.occasion)
-            st_ = STYLE_LABELS.get(it.style, it.style)
-            when = it.created_at.strftime("%d.%m %H:%M")
-            lines.append(f"{i}. {when} · {occ} ({st_}) → {it.channel}: {it.recipient_contact}")
-        max_client.send_message(chat_id, "\n".join(lines))
+        _show_history(st, db, max_client)
         return
 
     if text.lower().startswith("/cancel"):
@@ -380,6 +375,19 @@ def _handle_callback(update: dict, db: Session, max_client: MaxClient, giga: Gig
         max_client.send_message(chat_id, "Отменено. /start чтобы начать заново.")
         return
 
+    if payload == "history":
+        _show_history(st, db, max_client)
+        return
+
+    if payload == "finish":
+        st.step = "idle"
+        db.commit()
+        max_client.send_message(
+            chat_id,
+            "🏁 Готово на сегодня! Отличной работы.\n\nНапиши /start когда захочешь собрать новое поздравление, или /history — посмотреть отправленные.",
+        )
+        return
+
 
 def _generate_and_preview(st: UserState, db: Session, max_client: MaxClient, giga: GigaChatClient) -> None:
     # 1) текст — быстро
@@ -504,14 +512,25 @@ def _send_final(st: UserState, contact: str, db: Session, max_client: MaxClient)
         max_client.send_message(st.chat_id, f"❌ Не удалось отправить: {_short(e)}")
         return
 
+    img_id = None
+    if st.generated_image:
+        hosted = HostedImage(content=st.generated_image)
+        db.add(hosted)
+        db.flush()
+        img_id = hosted.id
     db.add(SentGreeting(
         user_id=st.user_id,
+        sender_user_id=st.user_id,
         occasion=st.occasion,
+        custom_occasion=st.custom_occasion or "",
         style=st.style,
         channel=st.channel,
         recipient_contact=contact,
+        recipient_info=st.recipient_info or "",
+        extra_wish=st.extra_wish or "",
         text=st.generated_text,
         has_image=1 if st.generated_image else 0,
+        image_id=img_id,
     ))
     st.step = "after_send"
     db.commit()
@@ -525,6 +544,56 @@ def _send_final(st: UserState, contact: str, db: Session, max_client: MaxClient)
 def _short(e: Exception) -> str:
     s = str(e)
     return s if len(s) < 120 else s[:117] + "..."
+
+
+def _show_history(st: UserState, db: Session, max_client: MaxClient) -> None:
+    items = (
+        db.query(SentGreeting)
+        .filter(SentGreeting.user_id == st.user_id)
+        .order_by(SentGreeting.id.desc())
+        .limit(10)
+        .all()
+    )
+    if not items:
+        max_client.send_message(
+            st.chat_id,
+            "📜 История пуста. Отправь хотя бы одно поздравление — появится здесь.",
+            buttons=_occasion_buttons(),
+        )
+        return
+
+    max_client.send_message(st.chat_id, f"📜 Твои последние {len(items)} поздравлений:")
+    base = (settings.public_base_url or "").rstrip("/")
+    for it in items:
+        occ_label = it.custom_occasion or OCCASION_LABELS.get(it.occasion, it.occasion or "—")
+        style_label = STYLE_LABELS.get(it.style, it.style or "—")
+        channel_label = {"max": "MAX", "email": "email"}.get(it.channel, it.channel or "—")
+        when = it.created_at.strftime("%d.%m.%Y %H:%M") if it.created_at else "—"
+
+        details = [f"🗓 {when}"]
+        details.append(f"🎉 Повод: {occ_label}")
+        details.append(f"🎭 Стиль: {style_label}")
+        if it.recipient_info:
+            details.append(f"👤 Получатель: {it.recipient_info}")
+        if it.extra_wish:
+            details.append(f"✨ Пожелание: {it.extra_wish}")
+        details.append(f"📮 Отправлено в {channel_label}: {it.recipient_contact or '—'}")
+        details.append("")
+        details.append(it.text or "—")
+
+        img_url = None
+        if it.image_id and base:
+            img_url = f"{base}/image/{it.image_id}.jpg"
+        max_client.send_message(st.chat_id, "\n".join(details), image_url=img_url)
+
+    max_client.send_message(
+        st.chat_id,
+        "Что дальше?",
+        buttons=[[
+            {"type": "callback", "text": "🆕 Новое поздравление", "payload": "restart"},
+            {"type": "callback", "text": "🏁 Завершить", "payload": "finish"},
+        ]],
+    )
 
 
 def _host_image(db: Session, binary: bytes) -> Optional[str]:

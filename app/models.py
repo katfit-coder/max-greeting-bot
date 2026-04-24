@@ -43,11 +43,16 @@ class SentGreeting(Base):
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, nullable=False, index=True)
     occasion = Column(String)
+    custom_occasion = Column(String, default="")
     style = Column(String)
     channel = Column(String)
     recipient_contact = Column(String)
+    recipient_info = Column(Text, default="")
+    extra_wish = Column(Text, default="")
     text = Column(Text)
     has_image = Column(Integer, default=0)
+    image_id = Column(Integer, nullable=True)
+    sender_user_id = Column(Integer, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -58,6 +63,11 @@ def init_db() -> None:
     new_columns = [
         ("user_states", "recipient_info", "TEXT DEFAULT ''"),
         ("user_states", "custom_occasion", "TEXT DEFAULT ''"),
+        ("sent_greetings", "custom_occasion", "TEXT DEFAULT ''"),
+        ("sent_greetings", "recipient_info", "TEXT DEFAULT ''"),
+        ("sent_greetings", "extra_wish", "TEXT DEFAULT ''"),
+        ("sent_greetings", "image_id", "INTEGER"),
+        ("sent_greetings", "sender_user_id", "INTEGER"),
     ]
     with engine.begin() as conn:
         for table, col, ddl in new_columns:

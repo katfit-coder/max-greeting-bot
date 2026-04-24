@@ -1,10 +1,14 @@
-OCCASIONS = [
-    ("birthday", "🎂 День рождения"),
-    ("new_year", "🎄 Новый год"),
-    ("mar8", "🌷 8 марта"),
-    ("feb23", "🎖 23 февраля"),
-    ("programmer_day", "💻 День программиста"),
-    ("thanks", "🙏 Благодарность коллеге"),
+from datetime import datetime
+
+# (key, label, (from_mm_dd, to_mm_dd) or None if always-on)
+# даты указаны включительно, диапазон «обёрнут вокруг нового года» обрабатывается ниже
+OCCASIONS_CONFIG = [
+    ("birthday", "🎂 День рождения", None),                         # всегда
+    ("new_year", "🎄 Новый год", ((12, 1), (1, 14))),               # декабрь-начало января
+    ("mar8", "🌷 8 марта", ((2, 15), (3, 10))),
+    ("feb23", "🎖 23 февраля", ((1, 25), (2, 25))),
+    ("programmer_day", "💻 День программиста", ((9, 1), (9, 20))),
+    ("thanks", "🙏 Благодарность коллеге", None),                   # всегда
 ]
 
 STYLES = [
@@ -15,15 +19,48 @@ STYLES = [
     ("friendly", "Дружеский"),
 ]
 
-OCCASION_LABELS = dict(OCCASIONS)
+OCCASION_LABELS = {k: label for k, label, _ in OCCASIONS_CONFIG}
 STYLE_LABELS = dict(STYLES)
 
 
+def _in_range(today_mm_dd: tuple[int, int], start: tuple[int, int], end: tuple[int, int]) -> bool:
+    """Inclusive range check. Supports ranges that wrap around new year (e.g. Dec 1 → Jan 14)."""
+    if start <= end:
+        return start <= today_mm_dd <= end
+    # wrap: today is either >= start (same-year tail) or <= end (next-year head)
+    return today_mm_dd >= start or today_mm_dd <= end
+
+
+def current_available_occasions() -> list[tuple[str, str]]:
+    """Return list of (key, label) for occasions valid today. Birthday/thanks/custom always included."""
+    now = datetime.now()
+    today = (now.month, now.day)
+    result = []
+    for key, label, rng in OCCASIONS_CONFIG:
+        if rng is None or _in_range(today, rng[0], rng[1]):
+            result.append((key, label))
+    return result
+
+
+# ============================================================================
+# Корпоративный контекст Мэрии Казани — используется в official/corporate стилях
+# ============================================================================
+KAZAN_CONTEXT = (
+    "Контекст: поздравление в Мэрии Казани — команде, которая развивает город. "
+    "Слоган: «Создаём город, в котором хочется жить, работать и мечтать!». "
+    "Ценности: служение городу и людям, наследие и культура как сила, "
+    "гибкость подходов при прочности целей, человекоцентричность, профессиональная команда, "
+    "наставничество, реализация масштабных проектов. "
+    "Для корпоративных поздравлений уместно мягко сослаться на общее дело — "
+    "развитие Казани и заботу о жителях — без пафоса и штампов."
+)
+
+
 TEXT_SYSTEM = (
-    "Ты — ассистент-копирайтер в муниципальной организации (Мэрия Казани). "
+    "Ты — ассистент-копирайтер в Мэрии Казани. "
     "Пишешь краткие, уместные и живые поздравления на русском языке. "
     "Никогда не используешь штампы вроде «в этот прекрасный день» или «пусть сбудутся все мечты». "
-    "Никогда не вставляешь эмодзи избыточно — максимум 2-3 на всё сообщение. "
+    "Эмодзи — максимум 2-3 на всё сообщение. "
     "Вывод — только текст поздравления, без вступлений вроде «Вот ваше поздравление:»."
 )
 
@@ -31,7 +68,6 @@ TEXT_SYSTEM = (
 def build_text_prompt(occasion_key: str, style_key: str, extra_wish: str = "",
                       recipient_name: str = "", sender_name: str = "",
                       recipient_info: str = "", custom_occasion: str = "") -> str:
-    from datetime import datetime
     today = datetime.now().strftime("%d.%m")
 
     if occasion_key == "custom" and custom_occasion:
@@ -45,6 +81,9 @@ def build_text_prompt(occasion_key: str, style_key: str, extra_wish: str = "",
         f"Сегодняшняя дата: {today}.",
         "Объём: 3–5 предложений, до 550 символов.",
     ]
+    # корпоративные ценности применяются в подходящих стилях
+    if style_key in ("corporate", "official"):
+        parts.append(KAZAN_CONTEXT)
     if recipient_info:
         parts.append(f"Персональный контекст о получателе (используй деликатно, если уместно): {recipient_info}.")
     if recipient_name:
@@ -80,7 +119,14 @@ STYLE_VISUAL_HINTS = {
 }
 
 
-def build_image_prompt(occasion_key: str, style_key: str) -> str:
-    base = IMAGE_DESCRIPTIONS.get(occasion_key, "праздничная поздравительная композиция")
+def build_image_prompt(occasion_key: str, style_key: str, custom_occasion: str = "") -> str:
+    if occasion_key == "custom" and custom_occasion:
+        base = f"поздравительная композиция на тему «{custom_occasion}»"
+    else:
+        base = IMAGE_DESCRIPTIONS.get(occasion_key, "праздничная поздравительная композиция")
     hint = STYLE_VISUAL_HINTS.get(style_key, "")
     return f"открытка-поздравление: {base}, {hint}, без текста и надписей на изображении, высокое качество"
+
+
+# для обратной совместимости со старыми импортами
+OCCASIONS = [(k, label) for k, label, _ in OCCASIONS_CONFIG]

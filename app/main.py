@@ -1,13 +1,15 @@
 import logging
+from collections import deque
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import Response
 
 from app.config import settings
 from app.flow import handle_update
 from app.gigachat import GigaChatClient
 from app.max_client import MaxClient
-from app.models import SessionLocal, init_db
+from app.models import HostedImage, SessionLocal, init_db
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("main")
@@ -31,6 +33,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="MAX Greeting Bot", lifespan=lifespan)
+RECENT_UPDATES: deque = deque(maxlen=20)
 
 
 @app.get("/")
@@ -52,6 +55,7 @@ def health():
 @app.post("/webhook")
 async def webhook(request: Request):
     update = await request.json()
+    RECENT_UPDATES.append(update)
     log.info("webhook update: type=%s", update.get("update_type"))
     if not app.state.max_client or not app.state.giga:
         log.error("bot not fully configured (max=%s giga=%s)", bool(app.state.max_client), bool(app.state.giga))
@@ -64,6 +68,23 @@ async def webhook(request: Request):
     finally:
         db.close()
     return {"ok": True}
+
+
+@app.get("/image/{image_id}.jpg")
+def get_image(image_id: int):
+    db = SessionLocal()
+    try:
+        img = db.query(HostedImage).filter(HostedImage.id == image_id).first()
+        if not img:
+            raise HTTPException(status_code=404)
+        return Response(content=img.content, media_type="image/jpeg")
+    finally:
+        db.close()
+
+
+@app.get("/admin/last-updates")
+def admin_last_updates():
+    return list(RECENT_UPDATES)
 
 
 @app.post("/admin/subscribe")

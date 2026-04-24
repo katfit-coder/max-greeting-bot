@@ -4,10 +4,11 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.emailer import EmailError, send_greeting_email
 from app.gigachat import GigaChatClient
 from app.max_client import MaxClient
-from app.models import SentGreeting, UserState
+from app.models import HostedImage, SentGreeting, UserState
 from app.prompts import (
     OCCASIONS,
     OCCASION_LABELS,
@@ -131,11 +132,27 @@ def _handle_bot_started(update: dict, db: Session, max_client: MaxClient) -> Non
 
 
 def _extract_from(obj: dict) -> tuple[Optional[int], Optional[int]]:
+    """Robustly pull chat_id and user_id from any MAX update shape
+    (message_created, message_callback, bot_started).
+    """
     msg = obj.get("message") or {}
     recipient = msg.get("recipient") or {}
-    sender = msg.get("sender") or obj.get("user") or {}
-    chat_id = recipient.get("chat_id") or obj.get("chat_id")
-    user_id = sender.get("user_id") or sender.get("id") or obj.get("user_id")
+    msg_sender = msg.get("sender") or {}
+    callback = obj.get("callback") or {}
+    cb_user = callback.get("user") or {}
+    top_user = obj.get("user") or {}
+
+    chat_id = (
+        recipient.get("chat_id")
+        or obj.get("chat_id")
+        or callback.get("chat_id")
+    )
+    user_id = (
+        msg_sender.get("user_id") or msg_sender.get("id")
+        or cb_user.get("user_id") or cb_user.get("id")
+        or top_user.get("user_id") or top_user.get("id")
+        or obj.get("user_id")
+    )
     return chat_id, user_id
 
 
@@ -375,13 +392,13 @@ def _generate_and_preview(st: UserState, db: Session, max_client: MaxClient, gig
     st.generated_text = text
     db.commit()
 
-    image_bytes: Optional[bytes] = None
+    image_url: Optional[str] = None
     try:
         img = giga.generate_image(build_image_prompt(st.occasion, st.style))
         if img is not None:
-            image_bytes = img.binary
-            st.generated_image = image_bytes
+            st.generated_image = img.binary
             db.commit()
+            image_url = _host_image(db, img.binary)
     except Exception as e:
         log.warning("image gen failed: %s", e)
         max_client.send_message(st.chat_id, "⚠️ Картинку сгенерировать не удалось, покажу только текст.")
@@ -389,10 +406,10 @@ def _generate_and_preview(st: UserState, db: Session, max_client: MaxClient, gig
     st.step = "preview"
     db.commit()
 
-    occ = OCCASION_LABELS.get(st.occasion, st.occasion)
+    occ = st.custom_occasion or OCCASION_LABELS.get(st.occasion, st.occasion)
     style = STYLE_LABELS.get(st.style, st.style)
     caption = f"📝 Черновик поздравления\n\nПовод: {occ}\nСтиль: {style}\n\n{text}"
-    max_client.send_message(st.chat_id, caption, buttons=_preview_buttons(), image_bytes=image_bytes)
+    max_client.send_message(st.chat_id, caption, buttons=_preview_buttons(), image_url=image_url)
 
 
 def _regen_text(st: UserState, db: Session, max_client: MaxClient, giga: GigaChatClient) -> None:
@@ -411,9 +428,9 @@ def _regen_text(st: UserState, db: Session, max_client: MaxClient, giga: GigaCha
         return
     st.generated_text = text
     db.commit()
-    image_bytes = st.generated_image
+    image_url = _latest_image_url(db, st.generated_image)
     caption = f"📝 Новый вариант:\n\n{text}"
-    max_client.send_message(st.chat_id, caption, buttons=_preview_buttons(), image_bytes=image_bytes)
+    max_client.send_message(st.chat_id, caption, buttons=_preview_buttons(), image_url=image_url)
 
 
 def _regen_image(st: UserState, db: Session, max_client: MaxClient, giga: GigaChatClient) -> None:
@@ -427,11 +444,12 @@ def _regen_image(st: UserState, db: Session, max_client: MaxClient, giga: GigaCh
         return
     st.generated_image = img.binary
     db.commit()
+    image_url = _host_image(db, img.binary)
     max_client.send_message(
         st.chat_id,
         f"🎨 Новая открытка к тому же тексту:\n\n{st.generated_text}",
         buttons=_preview_buttons(),
-        image_bytes=img.binary,
+        image_url=image_url,
     )
 
 
@@ -442,7 +460,8 @@ def _send_final(st: UserState, contact: str, db: Session, max_client: MaxClient)
             send_greeting_email(contact, subject, st.generated_text, st.generated_image)
             confirm = f"✅ Поздравление отправлено на {contact}"
         else:
-            max_client.send_message(int(contact), st.generated_text, image_bytes=st.generated_image)
+            image_url = _latest_image_url(db, st.generated_image)
+            max_client.send_message(int(contact), st.generated_text, image_url=image_url)
             confirm = f"✅ Поздравление отправлено в MAX (chat_id={contact})"
     except EmailError as e:
         max_client.send_message(st.chat_id, f"❌ {e}")
@@ -472,3 +491,21 @@ def _send_final(st: UserState, contact: str, db: Session, max_client: MaxClient)
 def _short(e: Exception) -> str:
     s = str(e)
     return s if len(s) < 120 else s[:117] + "..."
+
+
+def _host_image(db: Session, binary: bytes) -> Optional[str]:
+    base = (settings.public_base_url or "").rstrip("/")
+    if not base:
+        log.warning("PUBLIC_BASE_URL not set — cannot host image URL")
+        return None
+    img = HostedImage(content=binary)
+    db.add(img)
+    db.commit()
+    db.refresh(img)
+    return f"{base}/image/{img.id}.jpg"
+
+
+def _latest_image_url(db: Session, binary: Optional[bytes]) -> Optional[str]:
+    if not binary:
+        return None
+    return _host_image(db, binary)

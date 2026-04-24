@@ -28,9 +28,13 @@ class MaxClient:
         text: str,
         buttons: Optional[list[list[dict]]] = None,
         image_bytes: Optional[bytes] = None,
+        image_url: Optional[str] = None,
     ) -> dict:
         attachments = []
-        if image_bytes is not None:
+        # prefer URL attach (simpler + avoids MAX upload flow)
+        if image_url:
+            attachments.append({"type": "image", "payload": {"url": image_url}})
+        elif image_bytes is not None:
             token = self._upload_image(image_bytes)
             if token:
                 attachments.append({"type": "image", "payload": {"token": token}})

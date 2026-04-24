@@ -31,6 +31,13 @@ class UserState(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class HostedImage(Base):
+    __tablename__ = "hosted_images"
+    id = Column(Integer, primary_key=True)
+    content = Column(LargeBinary, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class SentGreeting(Base):
     __tablename__ = "sent_greetings"
     id = Column(Integer, primary_key=True)

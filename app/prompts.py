@@ -156,13 +156,34 @@ STYLE_VISUAL_HINTS = {
 }
 
 
+import random
+
 def build_image_prompt(occasion_key: str, style_key: str, custom_occasion: str = "") -> str:
+    """
+    Генерирует разнообразный промпт для открытки с вариативностью формулировок.
+    """
     if occasion_key == "custom" and custom_occasion:
         base = f"поздравительная композиция на тему «{custom_occasion}»"
     else:
         base = IMAGE_DESCRIPTIONS.get(occasion_key, "праздничная поздравительная композиция")
     hint = STYLE_VISUAL_HINTS.get(style_key, "")
-    return f"открытка-поздравление: {base}, {hint}, без текста и надписей на изображении, высокое качество"
+    intro_variants = [
+        "открытка-поздравление:",
+        "иллюстрация для поздравительной открытки:",
+        "яркая праздничная открытка:",
+        "авторская открытка:",
+        "цифровая поздравительная открытка:",
+    ]
+    quality_variants = [
+        "без текста и надписей на изображении, высокое качество",
+        "без надписей, HQ, стильная композиция",
+        "только визуальный сюжет, без текста, digital art",
+        "без слов, художественная открытка, 4k",
+        "только изображение, без букв, современная иллюстрация",
+    ]
+    intro = random.choice(intro_variants)
+    quality = random.choice(quality_variants)
+    return f"{intro} {base}, {hint}, {quality}"
 
 
 # для обратной совместимости со старыми импортами

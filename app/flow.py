@@ -696,12 +696,6 @@ def process_due_scheduled(db: Session, max_client: MaxClient) -> dict:
     """Find pending ScheduledGreeting with scheduled_at <= now, send them, mark sent/failed.
     Called on every webhook and via /admin/tick. Returns summary dict."""
     now = datetime.now()
-    due = (
-        db.query(ScheduledGreeting)
-        .filter(ScheduledGreeting.status == "pending", ScheduledGreeting.scheduled_at <= now)
-        .all()
-    )
-    sent, failed = 0, 0
     for item in due:
         try:
             if item.channel == "email":
@@ -722,6 +716,22 @@ def process_due_scheduled(db: Session, max_client: MaxClient) -> dict:
             item.status = "sent"
             item.sent_at = now
             sent += 1
+            # Запись в SentGreeting для истории
+            from app.models import SentGreeting
+            db.add(SentGreeting(
+                user_id=item.user_id,
+                sender_user_id=item.user_id,
+                occasion=item.occasion,
+                custom_occasion=item.custom_occasion or "",
+                style=item.style,
+                channel=item.channel,
+                recipient_contact=item.recipient_contact,
+                recipient_info=item.recipient_info or "",
+                extra_wish="",  # ScheduledGreeting не хранит это поле
+                text=item.text,
+                has_image=1 if item.image_id else 0,
+                image_id=item.image_id,
+            ))
             # уведомляем отправителя
             try:
                 max_client.send_message(
@@ -735,6 +745,12 @@ def process_due_scheduled(db: Session, max_client: MaxClient) -> dict:
             item.error = str(e)[:500]
             failed += 1
             try:
+                max_client.send_message(
+                    item.chat_id,
+                    f"⚠️ Не удалось отправить запланированное поздравление на {item.recipient_contact}: {str(e)[:150]}",
+                )
+            except Exception:
+                pass
                 max_client.send_message(
                     item.chat_id,
                     f"⚠️ Не удалось отправить запланированное поздравление на {item.recipient_contact}: {str(e)[:150]}",

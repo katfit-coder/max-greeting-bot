@@ -30,6 +30,8 @@ class MaxClient:
         image_bytes: Optional[bytes] = None,
         image_url: Optional[str] = None,
     ) -> dict:
+        import logging
+        log = logging.getLogger("max_client")
         attachments = []
         # prefer URL attach (simpler + avoids MAX upload flow)
         if image_url:
@@ -47,15 +49,19 @@ class MaxClient:
         if attachments:
             payload["attachments"] = attachments
 
-        with httpx.Client(timeout=30) as c:
-            r = c.post(
-                self._url("/messages"),
-                params={"chat_id": chat_id},
-                headers=self._headers(),
-                json=payload,
-            )
-            r.raise_for_status()
-            return r.json()
+        try:
+            with httpx.Client(timeout=30) as c:
+                r = c.post(
+                    self._url("/messages"),
+                    params={"chat_id": chat_id},
+                    headers=self._headers(),
+                    json=payload,
+                )
+                r.raise_for_status()
+                return r.json()
+        except Exception as e:
+            log.error(f"MAX send_message failed: chat_id={chat_id}, error={e}", exc_info=True)
+            raise
 
     def answer_callback(self, callback_id: str, notification: str = "") -> dict:
         with httpx.Client(timeout=10) as c:

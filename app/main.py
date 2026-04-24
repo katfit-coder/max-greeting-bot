@@ -54,7 +54,7 @@ def health():
 
 @app.get("/version")
 def version():
-    return {"build": "2026-04-24-v6-async-webhook-fix"}
+    return {"build": "2026-04-24-v7-image-context-fix"}
 
 
 def _process_update_in_bg(update: dict) -> None:

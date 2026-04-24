@@ -492,7 +492,14 @@ def _generate_and_preview(
     # 2) картинка — медленно, отдельным сообщением
     image_url: Optional[str] = None
     try:
-        img = giga.generate_image(build_image_prompt(st.occasion, st.style, st.custom_occasion or ""))
+        img = giga.generate_image(build_image_prompt(
+            occasion_key=st.occasion,
+            style_key=st.style,
+            recipient_name=st.recipient_name or "",
+            recipient_info=st.recipient_info or "",
+            extra_wish=st.extra_wish or "",
+            custom_occasion=st.custom_occasion or "",
+        ))
         if img is not None:
             st.generated_image = img.binary
             db.commit()
@@ -555,7 +562,15 @@ def _regen_image(
         max_client.send_message(st.chat_id, "⚠️ GigaChat не настроен (нет GIGACHAT_AUTH_KEY).")
         return
     try:
-        img = giga.generate_image(build_image_prompt(st.occasion, st.style, st.custom_occasion or ""))
+        img = giga.generate_image(build_image_prompt(
+            occasion_key=st.occasion,
+            style_key=st.style,
+            recipient_name=st.recipient_name or "",
+            recipient_info=st.recipient_info or "",
+            extra_wish=st.extra_wish or "",
+            custom_occasion=st.custom_occasion or "",
+            regen_counter=int(datetime.now().timestamp()) % 10000,
+        ))
     except Exception as e:
         max_client.send_message(st.chat_id, f"⚠️ Картинку не получилось: {_short(e)}")
         return

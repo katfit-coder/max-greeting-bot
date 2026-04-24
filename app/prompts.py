@@ -361,12 +361,37 @@ def build_image_prompt(occasion_key: str, style_key: str,
         variants = ["праздничная поздравительная композиция"]
     else:
         occasion_label = OCCASION_LABELS.get(occasion_key, occasion_key)
-        # уберём эмодзи из начала лейбла для передачи в модель
         occasion_label_clean = occasion_label.lstrip(" 🎂🎄🌷🎖💻🙏📈🏆🤝🚀☀️🕊🇷🇺🏴📚🍎📜📖🌾🎪🕌").strip()
         occasion_label = occasion_label_clean or occasion_label
         variants = IMAGE_DESCRIPTIONS.get(occasion_key, ["праздничная композиция"])
     visual = _r.choice(variants) if isinstance(variants, list) else variants
-    base = f"повод — {occasion_label}: {visual}"
+
+    # запрещаем частые «галлюцинации» модели — чтобы не подмешивала элементы чужого повода
+    NEGATIVES_BY_OCCASION = {
+        "promotion": "НЕ рисуй торт, свечи, воздушные шары.",
+        "thanks": "НЕ рисуй торт, свечи.",
+        "project_success": "НЕ рисуй торт, свечи.",
+        "work_anniversary": "",  # тут торт может быть уместен, но лучше медаль
+        "motivation": "НЕ рисуй торт, свечи, воздушные шары.",
+        "new_colleague": "НЕ рисуй торт, свечи, воздушные шары.",
+        "teacher_day": "НЕ рисуй торт.",
+        "programmer_day": "НЕ рисуй торт, свечи.",
+        "mar8": "НЕ рисуй торт.",
+        "feb23": "НЕ рисуй торт, свечи.",
+        "victory_day": "НЕ рисуй торт, свечи, воздушные шары.",
+        "russia_day": "НЕ рисуй торт.",
+        "flag_day": "НЕ рисуй торт.",
+        "knowledge_day": "НЕ рисуй торт.",
+        "unity_day": "НЕ рисуй торт.",
+        "constitution_day": "НЕ рисуй торт.",
+        "kazan_day": "НЕ рисуй торт.",
+        "sabantuy": "НЕ рисуй торт.",
+        "tatarstan_day": "НЕ рисуй торт.",
+        "tatarstan_constitution": "НЕ рисуй торт.",
+        "tatar_language_day": "НЕ рисуй торт.",
+    }
+    negatives = NEGATIVES_BY_OCCASION.get(occasion_key, "")
+    base = f"Повод поздравления — {occasion_label.upper()}. Главные элементы: {visual}."
 
     # ОДИН визуальный хинт из контекста (только первое совпадение)
     hint = ""
@@ -403,9 +428,18 @@ def build_image_prompt(occasion_key: str, style_key: str,
 
     regen_suffix = ""
     if regen_counter > 0:
-        regen_suffix = ", другая композиция"
+        regen_suffix = " Другая композиция."
 
-    return f"Нарисуй поздравительную открытку: {base}{hint}. Стиль: {style_part}{regen_suffix}. Без текста на изображении, 1024x1024."
+    parts = [f"Нарисуй поздравительную открытку. {base}"]
+    if hint:
+        parts.append(f"Добавь деталь: {hint.lstrip(', ')}.")
+    parts.append(f"Стиль: {style_part}.")
+    if negatives:
+        parts.append(negatives)
+    parts.append("Без текста и надписей на изображении. Формат 1024x1024.")
+    if regen_suffix:
+        parts.append(regen_suffix)
+    return " ".join(parts)
 
 
 def _build_image_prompt_OLD_UNUSED(occasion_key: str, style_key: str,

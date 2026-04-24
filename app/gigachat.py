@@ -76,14 +76,24 @@ class GigaChatClient:
             r.raise_for_status()
             return r.json()["choices"][0]["message"]["content"].strip()
 
-    def generate_image(self, description: str, timeout: float = 75) -> Optional[GigaChatImage]:
+    def generate_image(self, description: str, timeout: float = 90) -> Optional[GigaChatImage]:
         """GigaChat generates images via function_call=auto when model decides it needs one.
         We force it by asking explicitly. Returns the generated image bytes or None."""
+        import logging
+        log = logging.getLogger("gigachat")
+        
         token = self._get_token()
+        # Улучшенный промпт для гарантированной генерации изображения
         prompt = (
-            f"Нарисуй открытку: {description}. "
-            "Без текста на изображении. Формат: квадрат 1024x1024."
+            f"Создай изображение поздравительной открытки: {description}. "
+            "Требования: "
+            "1. Без текста и надписей на изображении. "
+            "2. Квадратный формат 1024x1024. "
+            "3. Яркая, праздничная, профессиональная композиция. "
+            "4. Используй красивую цветовую палитру. "
+            "Верни ТОЛЬКО изображение, без текстового описания."
         )
+        
         with httpx.Client(verify=False, timeout=timeout) as c:
             r = c.post(
                 CHAT_URL,
@@ -99,16 +109,22 @@ class GigaChatClient:
                 },
             )
             r.raise_for_status()
-            content = r.json()["choices"][0]["message"].get("content", "")
+            data = r.json()
+            content = data["choices"][0]["message"].get("content", "")
+            log.info(f"GigaChat image response: {content[:500]}")
+            
             # ответ содержит <img src="<file_id>" ...> с id сгенерированного файла
             file_id = _extract_file_id(content)
             if not file_id:
+                log.warning(f"No file_id found in GigaChat response: {content[:200]}")
                 return None
+            log.info(f"Downloading image file_id={file_id}")
             img_r = c.get(
                 f"{FILES_URL}/{file_id}/content",
                 headers={"Authorization": f"Bearer {token}", "Accept": "application/jpg"},
             )
             img_r.raise_for_status()
+            log.info(f"Image downloaded, size={len(img_r.content)} bytes")
             return GigaChatImage(file_id=file_id, binary=img_r.content)
 
 

@@ -477,7 +477,7 @@ def _generate_and_preview(st: UserState, db: Session, max_client: MaxClient, gig
     # 2) картинка — медленно, отдельным сообщением
     image_url: Optional[str] = None
     try:
-        img = giga.generate_image(build_image_prompt(st.occasion, st.style))
+        img = giga.generate_image(build_image_prompt(st.occasion, st.style, st.custom_occasion or ""))
         if img is not None:
             st.generated_image = img.binary
             db.commit()
@@ -530,7 +530,7 @@ def _regen_text(st: UserState, db: Session, max_client: MaxClient, giga: GigaCha
 
 def _regen_image(st: UserState, db: Session, max_client: MaxClient, giga: GigaChatClient) -> None:
     try:
-        img = giga.generate_image(build_image_prompt(st.occasion, st.style))
+        img = giga.generate_image(build_image_prompt(st.occasion, st.style, st.custom_occasion or ""))
     except Exception as e:
         max_client.send_message(st.chat_id, f"⚠️ Картинку не получилось: {_short(e)}")
         return

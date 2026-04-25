@@ -67,7 +67,7 @@ def health():
 
 @app.get("/version")
 def version():
-    return {"build": "2026-04-24-v14-save-only-fact-in-ps"}
+    return {"build": "2026-04-24-v15-bot-user-directory"}
 
 
 def _process_update_in_bg(update: dict) -> None:
@@ -98,6 +98,19 @@ async def webhook(request: Request, bg: BackgroundTasks):
     # Генерация и все долгие операции — в фоне.
     bg.add_task(_process_update_in_bg, update)
     return {"ok": True}
+
+
+@app.post("/admin/set-commands")
+def admin_set_commands():
+    if not app.state.max_client:
+        return {"error": "max not configured"}
+    cmds = [
+        {"name": "start", "description": "Новое поздравление"},
+        {"name": "history", "description": "История отправленных"},
+        {"name": "scheduled", "description": "Запланированные"},
+        {"name": "cancel", "description": "Отменить текущий диалог"},
+    ]
+    return app.state.max_client.set_commands(cmds)
 
 
 @app.post("/admin/tick")

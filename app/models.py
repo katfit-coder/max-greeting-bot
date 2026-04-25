@@ -30,6 +30,7 @@ class UserState(Base):
     generated_image = Column(LargeBinary, nullable=True)
     schedule_mode = Column(Integer, default=0)
     scheduled_at = Column(DateTime, nullable=True)
+    display_name = Column(String, default="")
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
@@ -87,6 +88,7 @@ def init_db() -> None:
         ("user_states", "custom_occasion", "TEXT DEFAULT ''"),
         ("user_states", "schedule_mode", "INTEGER DEFAULT 0"),
         ("user_states", "scheduled_at", "DATETIME"),
+        ("user_states", "display_name", "TEXT DEFAULT ''"),
         ("sent_greetings", "custom_occasion", "TEXT DEFAULT ''"),
         ("sent_greetings", "recipient_info", "TEXT DEFAULT ''"),
         ("sent_greetings", "extra_wish", "TEXT DEFAULT ''"),

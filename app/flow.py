@@ -100,8 +100,9 @@ def _channel_buttons_no_schedule() -> list[list[dict]]:
     return [
         [
             {"type": "callback", "text": "✉️ На email", "payload": "channel:email"},
-            {"type": "callback", "text": "📱 Себе в MAX (тест)", "payload": "channel:max_contact"},
+            {"type": "callback", "text": "👥 Кому-то из бота", "payload": "channel:bot_user"},
         ],
+        [{"type": "callback", "text": "📱 Себе в MAX (тест)", "payload": "channel:max_self"}],
         [{"type": "callback", "text": "◀️ Отмена", "payload": "cancel"}],
     ]
 
@@ -110,26 +111,79 @@ def _channel_buttons() -> list[list[dict]]:
     return [
         [
             {"type": "callback", "text": "✉️ На email", "payload": "channel:email"},
-            {"type": "callback", "text": "📱 Себе в MAX (тест)", "payload": "channel:max_contact"},
+            {"type": "callback", "text": "👥 Кому-то из бота", "payload": "channel:bot_user"},
         ],
         [
+            {"type": "callback", "text": "📱 Себе в MAX (тест)", "payload": "channel:max_self"},
             {"type": "callback", "text": "⏰ Запланировать", "payload": "schedule"},
-            {"type": "callback", "text": "📦 Сохранить в историю", "payload": "save_only"},
         ],
-        [{"type": "callback", "text": "◀️ Отмена", "payload": "cancel"}],
+        [
+            {"type": "callback", "text": "📦 Сохранить в историю", "payload": "save_only"},
+            {"type": "callback", "text": "◀️ Отмена", "payload": "cancel"},
+        ],
     ]
 
 
-def _get_or_create_state(db: Session, user_id: int, chat_id: int) -> UserState:
+def _bot_user_directory_buttons(db: Session, exclude_user_id: int) -> list[list[dict]]:
+    """Возвращает кнопки со списком пользователей бота (кроме самого отправителя).
+    Каждая кнопка → callback pick:<user_id>."""
+    rows: list[list[dict]] = []
+    users = (
+        db.query(UserState)
+        .filter(UserState.user_id != exclude_user_id)
+        .order_by(UserState.updated_at.desc())
+        .limit(20)
+        .all()
+    )
+    cur: list[dict] = []
+    for u in users:
+        label = u.display_name or f"id {u.user_id}"
+        cur.append({"type": "callback", "text": f"👤 {label[:24]}", "payload": f"pick:{u.user_id}"})
+        if len(cur) == 2:
+            rows.append(cur)
+            cur = []
+    if cur:
+        rows.append(cur)
+    rows.append([{"type": "callback", "text": "◀️ Назад", "payload": "back:channel"}])
+    return rows
+
+
+def _extract_display_name(update: dict) -> str:
+    """Достаём имя пользователя из любого апдейта."""
+    msg = update.get("message") or {}
+    callback = update.get("callback") or {}
+    candidates = [
+        callback.get("user") or {},
+        msg.get("sender") or {},
+        update.get("user") or {},
+    ]
+    for c in candidates:
+        # пропускаем боты
+        if c.get("is_bot"):
+            continue
+        name = c.get("name") or c.get("first_name") or ""
+        last = c.get("last_name") or ""
+        if name:
+            return (name + (" " + last if last else "")).strip()[:80]
+    return ""
+
+
+def _get_or_create_state(db: Session, user_id: int, chat_id: int, display_name: str = "") -> UserState:
     st = db.query(UserState).filter(UserState.user_id == user_id).first()
     if not st:
-        st = UserState(user_id=user_id, chat_id=chat_id, step="idle")
+        st = UserState(user_id=user_id, chat_id=chat_id, step="idle", display_name=display_name)
         db.add(st)
         db.commit()
         db.refresh(st)
     else:
+        changed = False
         if st.chat_id != chat_id:
             st.chat_id = chat_id
+            changed = True
+        if display_name and st.display_name != display_name:
+            st.display_name = display_name
+            changed = True
+        if changed:
             db.commit()
     return st
 
@@ -158,7 +212,7 @@ def _handle_bot_started(update: dict, db: Session, max_client: MaxClient) -> Non
     # детектим первый запуск: state ещё не создан
     existing = db.query(UserState).filter(UserState.user_id == user_id).first()
     is_first_time = existing is None
-    st = _get_or_create_state(db, user_id, chat_id)
+    st = _get_or_create_state(db, user_id, chat_id, display_name=_extract_display_name(update))
     st.step = "choose_occasion"
     db.commit()
 
@@ -248,7 +302,7 @@ def _handle_message(
     if not chat_id or not user_id:
         log.warning("can't resolve chat_id/user_id from update: %s", update)
         return
-    st = _get_or_create_state(db, user_id, chat_id)
+    st = _get_or_create_state(db, user_id, chat_id, display_name=_extract_display_name(update))
 
     if text.lower().startswith("/start"):
         st.step = "choose_occasion"
@@ -393,7 +447,7 @@ def _handle_callback(
     chat_id, user_id = _extract_from(update)
     if not chat_id or not user_id:
         return
-    st = _get_or_create_state(db, user_id, chat_id)
+    st = _get_or_create_state(db, user_id, chat_id, display_name=_extract_display_name(update))
     max_client.answer_callback(callback_id)
 
     # Защита от кликов по старым кнопкам: callback должен соответствовать текущему шагу.
@@ -412,8 +466,9 @@ def _handle_callback(
             "occasion": {"choose_occasion"},
             "style": {"choose_style"},
             "regen": {"preview"},
-            "back": {"preview"},
+            "back": {"preview", "choose_channel"},
             "channel": {"choose_channel"},
+            "pick": {"choose_channel"},
         }
         allowed = expected_step.get(payload) or step_map.get(prefix)
         if allowed is not None and st.step not in allowed:
@@ -513,27 +568,53 @@ def _handle_callback(
 
     if payload.startswith("channel:"):
         st.channel = payload.split(":", 1)[1]
-        st.step = "await_contact"
         db.commit()
         if st.channel == "email":
+            st.step = "await_contact"
+            db.commit()
             max_client.send_message(chat_id, "📧 Введи email получателя:")
-        elif st.channel == "max_contact":
-            # просим пользователя поделиться контактом — MAX откроет нативный picker
-            max_client.send_message(
-                chat_id,
-                "📱 Нажми кнопку ниже и выбери получателя из своих контактов в MAX.\n"
-                "Получатель должен иметь установленный MAX и хотя бы раз запускать этого бота "
-                "(иначе мессенджер не позволит отправить ему сообщение от бота).",
-                buttons=[
-                    [{"type": "request_contact", "text": "📲 Выбрать получателя"}],
-                    [{"type": "callback", "text": "◀️ Отмена", "payload": "cancel"}],
-                ],
-            )
-        else:
+        elif st.channel == "max_self":
+            # отправка самому себе (для теста / себе как напоминание)
+            _send_final(st, str(chat_id), db, max_client, recipient_label="себе")
+        elif st.channel == "bot_user":
+            # показываем список пользователей нашего бота
+            buttons = _bot_user_directory_buttons(db, exclude_user_id=st.user_id)
+            if len(buttons) == 1:  # только кнопка «Назад» — никого больше нет
+                max_client.send_message(
+                    chat_id,
+                    "📭 Пока в боте нет других пользователей кроме тебя.\n"
+                    "Когда коллеги запустят бота, они появятся здесь автоматически.",
+                    buttons=[[{"type": "callback", "text": "◀️ Назад к каналам", "payload": "back:channel"}]],
+                )
+            else:
+                max_client.send_message(
+                    chat_id,
+                    "👥 Выбери получателя из тех, кто пользуется ботом:",
+                    buttons=buttons,
+                )
+        elif st.channel == "max":
+            st.step = "await_contact"
+            db.commit()
             max_client.send_message(
                 chat_id,
                 f"💬 Введи chat_id получателя в MAX (число).\n\nДля теста можешь отправить на свой — твой chat_id: {chat_id}",
             )
+        return
+
+    if payload.startswith("pick:"):
+        target_id = payload.split(":", 1)[1]
+        target_state = db.query(UserState).filter(UserState.user_id == int(target_id)).first()
+        target_chat = target_state.chat_id if target_state else int(target_id)
+        target_name = target_state.display_name if target_state and target_state.display_name else f"id {target_id}"
+        st.channel = "bot_user"
+        db.commit()
+        _send_final(st, str(target_chat), db, max_client, recipient_label=target_name)
+        return
+
+    if payload == "back:channel":
+        st.step = "choose_channel"
+        db.commit()
+        max_client.send_message(chat_id, "Куда отправить поздравление?", buttons=_channel_buttons())
         return
 
     if payload == "cancel":
@@ -1016,6 +1097,8 @@ def _show_history(st: UserState, db: Session, max_client: MaxClient) -> None:
         channel_label = {
             "max": "MAX",
             "max_contact": "MAX (себе)",
+            "max_self": "MAX (себе)",
+            "bot_user": "MAX (коллеге из бота)",
             "email": "email",
             "saved": "📦 только в истории",
         }.get(it.channel, it.channel or "—")

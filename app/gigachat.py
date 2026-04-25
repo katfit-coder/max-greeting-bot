@@ -1,4 +1,5 @@
 import base64
+import random
 import time
 import uuid
 from dataclasses import dataclass
@@ -58,37 +59,38 @@ class GigaChatClient:
         recipient_info: str = "", extra_wish: str = "",
         custom_occasion: str = "",
     ) -> str:
-        """Универсальный арт-директор. ОДИН промпт для всех поводов, никаких per-occasion веток.
-        Сцена строится только из переданного текста повода + контекста получателя."""
+        """
+        Генерирует уникальный промпт для открытки (30-60 слов, быстро).
+        Учитывает повод, стиль, информацию о получателе и пожелание.
+        """
         token = self._get_token()
         topic = custom_occasion or occasion_label
 
         sys_prompt = (
-            "Ты — креативный арт-директор поздравительных открыток. "
-            "На входе ты получаешь: повод поздравления, стиль и опционально контекст о получателе и пожелание. "
-            "Твоя задача: придумать ОДНУ уникальную сцену для иллюстрации в 1–2 предложениях (40–70 слов). "
-            "Жёсткие правила: "
-            "1) Сцена должна на 100% соответствовать данному поводу — не подмешивай элементы из других праздников и не используй универсальные клише поздравительных открыток (торт со свечами, воздушные шары, цифры возраста, букеты роз, фейерверк), если повод сам не подразумевает их буквально. "
-            "2) Используй контекст получателя для индивидуальной детали. "
-            "3) Каждый раз выбирай разный визуальный приём: интерьер, метафора, характерный предмет, руки крупным планом, пейзаж, абстракция, минимализм. "
-            "4) На изображении не должно быть НИКАКОГО текста, букв, цифр, надписей, слоганов или ярлыков. "
-            "Выдай только сам текст описания сцены, без вступлений, кавычек или инструкций."
+            "Ты создаёшь уникальное визуальное описание для поздравительной открытки. "
+            "Правила: "
+            "1) Никогда не используй торты, шары, цветы, свечи, фейерверки, цифры возраста — это клише. "
+            "2) Придумай оригинальную метафору или неожиданную сцену (руки, интерьер, природа, абстракция, предметы). "
+            "3) Учитывай повод и контекст о получателе для персонализации. "
+            "4) На картинке НЕ должно быть текста, букв, цифр, надписей. "
+            "5) Каждый раз выбирай разный визуальный приём. "
+            "Ответ — одно предложение, 30-60 слов, на русском языке."
         )
+        
         user_prompt_parts = [f"Повод: {topic}.", f"Стиль: {style_label}."]
         if recipient_info:
             user_prompt_parts.append(f"О получателе: {recipient_info}.")
         if extra_wish:
             user_prompt_parts.append(f"Пожелание: {extra_wish}.")
-        user_prompt_parts.append("Опиши уникальную сцену открытки.")
+        user_prompt_parts.append("Опиши уникальную сцену для открытки.")
         user_prompt = " ".join(user_prompt_parts)
 
-        with httpx.Client(verify=False, timeout=httpx.Timeout(connect=15, read=40, write=20, pool=5)) as c:
+        with httpx.Client(verify=False, timeout=httpx.Timeout(connect=10, read=30, write=10, pool=5)) as c:
             r = c.post(
                 CHAT_URL,
                 headers={
                     "Authorization": f"Bearer {token}",
                     "Content-Type": "application/json",
-                    "Accept": "application/json",
                 },
                 json={
                     "model": "GigaChat-2-Max",
@@ -96,12 +98,25 @@ class GigaChatClient:
                         {"role": "system", "content": sys_prompt},
                         {"role": "user", "content": user_prompt},
                     ],
-                    "temperature": 1.0,
-                    "max_tokens": 220,
+                    "temperature": 1.3,      # творческий разброс
+                    "max_tokens": 140,       # короткий ответ для скорости
                 },
             )
             r.raise_for_status()
-            return r.json()["choices"][0]["message"]["content"].strip()
+            scene = r.json()["choices"][0]["message"]["content"].strip()
+            
+            # Добавляем случайный художественный стиль для разнообразия
+            style_suffixes = [
+                " в стиле акварель",
+                " минималистичная иллюстрация",
+                " мягкие пастельные тона",
+                " в стиле цифровой живописи",
+                " в стиле карандашного рисунка",
+                "",
+                "",
+            ]
+            scene += random.choice(style_suffixes)
+            return scene
 
     def generate_text(self, system: str, user: str, max_tokens: int = 700) -> str:
         token = self._get_token()
@@ -111,7 +126,6 @@ class GigaChatClient:
                 headers={
                     "Authorization": f"Bearer {token}",
                     "Content-Type": "application/json",
-                    "Accept": "application/json",
                 },
                 json={
                     "model": "GigaChat-2-Max",
@@ -126,16 +140,19 @@ class GigaChatClient:
             r.raise_for_status()
             return r.json()["choices"][0]["message"]["content"].strip()
 
-    def generate_image(self, description: str, timeout: float = 120, retries: int = 2) -> Optional[GigaChatImage]:
-        """GigaChat generates images via function_call=auto when model decides it needs one.
-        `description` — уже готовый промпт из prompts.build_image_prompt."""
+    def generate_image(self, description: str, timeout: float = 60, retries: int = 2) -> Optional[GigaChatImage]:
+        """
+        Генерирует уникальную картинку на основе промпта.
+        Оптимизирован для скорости (таймаут 60 сек) и вариативности.
+        """
         import logging
         log = logging.getLogger("gigachat")
-        # отказываемся от раздувания описания (сам build_image_prompt уже делает всё что нужно)
+        
+        # Оставляем промпт как есть — не добавляем лишнего
         prompt = description
-        http_timeout = httpx.Timeout(connect=15, read=timeout, write=30, pool=5)
+        http_timeout = httpx.Timeout(connect=10, read=timeout, write=20, pool=5)
 
-        last_exc: Exception = RuntimeError("no attempts")
+        last_exc = RuntimeError("no attempts")
         for attempt in range(retries):
             try:
                 token = self._get_token()
@@ -145,23 +162,25 @@ class GigaChatClient:
                         headers={
                             "Authorization": f"Bearer {token}",
                             "Content-Type": "application/json",
-                            "Accept": "application/json",
                         },
                         json={
                             "model": "GigaChat-2-Max",
                             "messages": [{"role": "user", "content": prompt}],
-                            "function_call": "auto",
+                            "temperature": 1.2,      # высокая вариативность
+                            "max_tokens": 300,
+                            "function_call": "none",  # отключаем авто-функции
                         },
                     )
                     r.raise_for_status()
                     data = r.json()
                     content = data["choices"][0]["message"].get("content", "")
-                    log.info("GigaChat image response (attempt %d): %s", attempt + 1, content[:500])
+                    log.info("GigaChat response (attempt %d): %s", attempt + 1, content[:300])
 
-                    file_id = _extract_file_id(content)
+                    file_id = self._extract_file_id(content)
                     if not file_id:
-                        log.warning("No file_id found in GigaChat response: %s", content[:200])
-                        return None
+                        log.warning("No file_id found in response: %s", content[:200])
+                        continue
+                    
                     log.info("Downloading image file_id=%s", file_id)
                     img_r = c.get(
                         f"{FILES_URL}/{file_id}/content",
@@ -170,17 +189,20 @@ class GigaChatClient:
                     img_r.raise_for_status()
                     log.info("Image downloaded, size=%d bytes", len(img_r.content))
                     return GigaChatImage(file_id=file_id, binary=img_r.content)
+                    
             except Exception as e:
                 last_exc = e
-                log.warning("Image generation attempt %d failed: %s", attempt + 1, e)
+                log.warning("Attempt %d failed: %s", attempt + 1, e)
+                
         raise last_exc
 
-
-def _extract_file_id(content: str) -> Optional[str]:
-    if 'src="' not in content:
-        return None
-    start = content.find('src="') + len('src="')
-    end = content.find('"', start)
-    if end <= start:
-        return None
-    return content[start:end]
+    @staticmethod
+    def _extract_file_id(content: str) -> Optional[str]:
+        """Извлекает file_id из ответа GigaChat"""
+        if 'src="' not in content:
+            return None
+        start = content.find('src="') + len('src="')
+        end = content.find('"', start)
+        if end <= start:
+            return None
+        return content[start:end]

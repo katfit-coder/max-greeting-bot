@@ -99,8 +99,8 @@ def _preview_buttons() -> list[list[dict]]:
 def _channel_buttons_no_schedule() -> list[list[dict]]:
     return [
         [
-            {"type": "callback", "text": "💬 Отправить в MAX", "payload": "channel:max"},
             {"type": "callback", "text": "✉️ На email", "payload": "channel:email"},
+            {"type": "callback", "text": "📱 Себе в MAX (тест)", "payload": "channel:max_contact"},
         ],
         [{"type": "callback", "text": "◀️ Отмена", "payload": "cancel"}],
     ]
@@ -109,12 +109,12 @@ def _channel_buttons_no_schedule() -> list[list[dict]]:
 def _channel_buttons() -> list[list[dict]]:
     return [
         [
-            {"type": "callback", "text": "💬 В MAX по chat_id", "payload": "channel:max"},
-            {"type": "callback", "text": "📱 Из контактов MAX", "payload": "channel:max_contact"},
+            {"type": "callback", "text": "✉️ На email", "payload": "channel:email"},
+            {"type": "callback", "text": "📱 Себе в MAX (тест)", "payload": "channel:max_contact"},
         ],
         [
-            {"type": "callback", "text": "✉️ На email", "payload": "channel:email"},
             {"type": "callback", "text": "⏰ Запланировать", "payload": "schedule"},
+            {"type": "callback", "text": "📦 Сохранить в историю", "payload": "save_only"},
         ],
         [{"type": "callback", "text": "◀️ Отмена", "payload": "cancel"}],
     ]
@@ -398,7 +398,7 @@ def _handle_callback(
 
     # Защита от кликов по старым кнопкам: callback должен соответствовать текущему шагу.
     # Эти callbacks разрешены в любом состоянии (они не ломают поток):
-    universal = {"cancel", "history", "finish", "restart"}
+    universal = {"cancel", "history", "finish", "restart", "save_only"}
     # Для state-specific — проверяем ожидаемый шаг:
     expected_step = {
         "skip_info": {"await_recipient_info"},
@@ -541,6 +541,40 @@ def _handle_callback(
         st.schedule_mode = 0
         db.commit()
         max_client.send_message(chat_id, "Отменено.", buttons=_quick_actions())
+        return
+
+    if payload == "save_only":
+        # пользователь не хочет никому отправлять — просто сохраняем в историю
+        if not st.generated_text:
+            max_client.send_message(chat_id, "⚠️ Нечего сохранять — поздравление ещё не сгенерировано.", buttons=_quick_actions())
+            return
+        img_id = None
+        if st.generated_image:
+            hosted = HostedImage(content=st.generated_image)
+            db.add(hosted)
+            db.flush()
+            img_id = hosted.id
+        db.add(SentGreeting(
+            user_id=st.user_id,
+            sender_user_id=st.user_id,
+            occasion=st.occasion,
+            custom_occasion=st.custom_occasion or "",
+            style=st.style,
+            channel="saved",
+            recipient_contact="—",
+            recipient_info=st.recipient_info or "",
+            extra_wish=st.extra_wish or "",
+            text=st.generated_text,
+            has_image=1 if st.generated_image else 0,
+            image_id=img_id,
+        ))
+        st.step = "after_send"
+        db.commit()
+        max_client.send_message(
+            chat_id,
+            "📦 Сохранил в историю — отправлять никому не буду.\n\nЧто дальше?",
+            buttons=_after_send_buttons(),
+        )
         return
 
     if payload == "schedule":
@@ -979,7 +1013,12 @@ def _show_history(st: UserState, db: Session, max_client: MaxClient) -> None:
     for it in items:
         occ_label = it.custom_occasion or OCCASION_LABELS.get(it.occasion, it.occasion or "—")
         style_label = STYLE_LABELS.get(it.style, it.style or "—")
-        channel_label = {"max": "MAX", "max_contact": "MAX (контакт)", "email": "email"}.get(it.channel, it.channel or "—")
+        channel_label = {
+            "max": "MAX",
+            "max_contact": "MAX (себе)",
+            "email": "email",
+            "saved": "📦 только в истории",
+        }.get(it.channel, it.channel or "—")
         when = it.created_at.strftime("%d.%m.%Y %H:%M") if it.created_at else "—"
 
         details = [f"🗓 {when}"]
@@ -989,7 +1028,10 @@ def _show_history(st: UserState, db: Session, max_client: MaxClient) -> None:
             details.append(f"👤 Получатель: {it.recipient_info}")
         if it.extra_wish:
             details.append(f"✨ Пожелание: {it.extra_wish}")
-        details.append(f"📮 Отправлено в {channel_label}: {it.recipient_contact or '—'}")
+        if it.channel == "saved":
+            details.append(f"📮 Канал: {channel_label} (без отправки)")
+        else:
+            details.append(f"📮 Отправлено в {channel_label}: {it.recipient_contact or '—'}")
         details.append("")
         details.append(it.text or "—")
 

@@ -67,7 +67,7 @@ def health():
 
 @app.get("/version")
 def version():
-    return {"build": "2026-04-24-v13-welcome-quick-actions-contact-share"}
+    return {"build": "2026-04-24-v14-save-only-fact-in-ps"}
 
 
 def _process_update_in_bg(update: dict) -> None:

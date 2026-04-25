@@ -1127,7 +1127,7 @@ def _show_history(st: UserState, db: Session, max_client: MaxClient) -> None:
         st.chat_id,
         "Что дальше?",
         buttons=[[
-            {"type": "callback", "text": "🆕 Новое поздравление", "payload": "restart"},
+            {"type": "callback", "text": "🆕 Новое 🎉", "payload": "restart"},
             {"type": "callback", "text": "🏁 Завершить", "payload": "finish"},
         ]],
     )

@@ -63,83 +63,70 @@ class GigaChatClient:
         if match:
             return match.group(1)
         return None
+
+    def _transliterate(self, text: str) -> str:
+        """Простейшая транслитерация для GigaChat"""
+        mapping = {
+            'а': 'a', 'б': 'b', 'в': 'v', 'г': 'g', 'д': 'd',
+            'е': 'e', 'ё': 'e', 'ж': 'zh', 'з': 'z', 'и': 'i',
+            'й': 'y', 'к': 'k', 'л': 'l', 'м': 'm', 'н': 'n',
+            'о': 'o', 'п': 'p', 'р': 'r', 'с': 's', 'т': 't',
+            'у': 'u', 'ф': 'f', 'х': 'kh', 'ц': 'ts', 'ч': 'ch',
+            'ш': 'sh', 'щ': 'sch', 'ъ': '', 'ы': 'y', 'ь': '',
+            'э': 'e', 'ю': 'yu', 'я': 'ya',
+        }
+        return ''.join(mapping.get(c, c) for c in text.lower())
+
+    def build_image_prompt(
+        self, 
+        occasion: str,
+        style: str,
+        recipient_info: str = "",
+        custom_occasion: str = "",
+        regen_counter: int = 0
+    ) -> str:
+        """
+        Склеивает переменные в простую фразу на английском.
+        """
+        # Что именно празднуем
+        if custom_occasion:
+            topic = custom_occasion
+        else:
+            topic = occasion
         
-# Простейший "перевод" — транслитерация
-def transliterate(text: str) -> str:
-    mapping = {
-        'а': 'a', 'б': 'b', 'в': 'v', 'г': 'g', 'д': 'd',
-        'е': 'e', 'ё': 'e', 'ж': 'zh', 'з': 'z', 'и': 'i',
-        'й': 'y', 'к': 'k', 'л': 'l', 'м': 'm', 'н': 'n',
-        'о': 'o', 'п': 'p', 'р': 'r', 'с': 's', 'т': 't',
-        'у': 'u', 'ф': 'f', 'х': 'kh', 'ц': 'ts', 'ч': 'ch',
-        'ш': 'sh', 'щ': 'sch', 'ъ': '', 'ы': 'y', 'ь': '',
-        'э': 'e', 'ю': 'yu', 'я': 'ya',
-    }
-    return ''.join(mapping.get(c, c) for c in text.lower())
-    
-  def build_image_prompt(
-    self, 
-    occasion: str,           # то, что выбрал пользователь (кнопка)
-    style: str,              # стиль (Официальный/Дружеский/С юмором)
-    recipient_info: str = "",# информация о получателе (если есть)
-    custom_occasion: str = "",# если пользователь ввёл свой повод
-    regen_counter: int = 0   # для разнообразия при перегенерации
-) -> str:
-    """
-    Склеивает переменные в простую фразу на английском.
-    Без словарей, без ограничений по списку поводов.
-    """
-    
-    # Что именно празднуем
-    if custom_occasion:
-        topic = custom_occasion
-    else:
-        topic = occasion
-    
-    # Перевод стиля на английский
-    style_en = {
-        "Официальный": "official professional",
-        "Тёплый / семейный": "warm family",
-        "Корпоративный": "corporate business",
-        "С юмором": "humorous funny",
-        "Дружеский": "friendly warm",
-    }.get(style, "beautiful")
-    
-    # Собираем фразу из того, что есть
-    parts = []
-    
-    # Основа: что это за картинка
-    parts.append(f"Greeting card for {topic}")
-    
-    # Добавляем стиль
-    parts.append(f"style {style_en}")
-    
-    # Если есть информация о получателе — добавляем
-    if recipient_info:
-        parts.append(f"for {recipient_info}")
-    
-    # Добавляем рандомное слово для разнообразия (не влияет на смысл)
-    random_words = ["", "celebration", "festive", "happy", "colorful", "elegant"]
-    import random
-    if regen_counter > 0:
-        random.seed(regen_counter)
-    rnd = random.choice(random_words)
-    if rnd:
+        # Транслитерируем тему (чтобы GigaChat понял)
+        topic_en = self._transliterate(topic)
+        
+        # Перевод стиля на английский
+        style_en = {
+            "Официальный": "official professional",
+            "Тёплый / семейный": "warm family",
+            "Корпоративный": "corporate business",
+            "С юмором": "humorous funny",
+            "Дружеский": "friendly warm",
+        }.get(style, "beautiful")
+        
+        # Собираем фразу
+        parts = [f"Greeting card for {topic_en}", f"style {style_en}"]
+        
+        if recipient_info:
+            recipient_en = self._transliterate(recipient_info)
+            parts.append(f"for {recipient_en}")
+        
+        # Рандомное слово для разнообразия
+        random_words = ["celebration", "festive", "happy", "colorful", "elegant"]
+        if regen_counter > 0:
+            random.seed(regen_counter)
+        rnd = random.choice(random_words)
         parts.append(rnd)
-    
-    # Финальная склейка
-    prompt = " ".join(parts) + ". No text on image."
-    
-    self.logger.info(f"Image prompt: {prompt}")
-    return prompt
         
-        self.logger.info(f"Unique prompt (seed={seed}): {prompt}")
+        prompt = " ".join(parts) + ". No text on image."
+        
+        self.logger.info(f"Image prompt: {prompt}")
         return prompt
 
     def generate_image(self, prompt: str, timeout: float = 60, retries: int = 3) -> Optional[GigaChatImage]:
-        """
-        Генерирует картинку по промпту.
-        """
+        """Генерирует картинку по промпту."""
         http_timeout = httpx.Timeout(connect=15, read=timeout, write=30, pool=5)
         
         for attempt in range(retries):
@@ -156,11 +143,11 @@ def transliterate(text: str) -> str:
                         json={
                             "model": "GigaChat-2-Max",
                             "messages": [
-                                {"role": "system", "content": "Ты — профессиональный иллюстратор. Создаёшь красивые поздравительные открытки. На картинке не должно быть текста."},
-                                {"role": "user", "content": f"Нарисуй открытку: {prompt}"}
+                                {"role": "system", "content": "You are an illustrator. Create beautiful greeting cards. No text on images."},
+                                {"role": "user", "content": f"Draw: {prompt}"}
                             ],
                             "function_call": "auto",
-                            "temperature": 1.3,  # Высокая вариативность
+                            "temperature": 1.2,
                             "max_tokens": 250,
                         },
                     )
@@ -173,7 +160,6 @@ def transliterate(text: str) -> str:
                     file_id = self._extract_file_id(content)
                     
                     if not file_id:
-                        # Проверяем function_call
                         msg = data["choices"][0]["message"]
                         if "function_call" in msg and msg["function_call"].get("name") == "text2image":
                             args = msg["function_call"].get("arguments", {})

@@ -48,7 +48,7 @@ class ScheduledGreeting(Base):
     custom_occasion = Column(String, default="")
     style = Column(String, default="")
     recipient_info = Column(Text, default="")
-    status = Column(String, default="pending")   # pending | sent | failed
+    status = Column(String, default="pending", index=True)   # pending | sent | failed
     error = Column(Text, default="")
     created_at = Column(DateTime, default=datetime.utcnow)
     sent_at = Column(DateTime, nullable=True)
@@ -81,6 +81,13 @@ class SentGreeting(Base):
 
 def init_db() -> None:
     Base.metadata.create_all(bind=engine)
+    # индекс для процессора очереди — ускоряет SELECT pending+due
+    from sqlalchemy import text as _t
+    try:
+        with engine.begin() as conn:
+            conn.execute(_t("CREATE INDEX IF NOT EXISTS ix_scheduled_status_at ON scheduled_greetings(status, scheduled_at)"))
+    except Exception:
+        pass
     # lightweight migration: add new columns if table already exists from previous deploys
     from sqlalchemy import text
     new_columns = [

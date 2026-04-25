@@ -67,7 +67,7 @@ def health():
 
 @app.get("/version")
 def version():
-    return {"build": "2026-04-25-v16-utc-msk-fix"}
+    return {"build": "2026-04-25-v17-tick-index"}
 
 
 def _process_update_in_bg(update: dict) -> None:

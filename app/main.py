@@ -100,6 +100,16 @@ async def webhook(request: Request, bg: BackgroundTasks):
     return {"ok": True}
 
 
+@app.get("/admin/me")
+def admin_me():
+    if not app.state.max_client:
+        return {"error": "max not configured"}
+    import httpx
+    with httpx.Client(timeout=10) as c:
+        r = c.get("https://botapi.max.ru/me", headers=app.state.max_client._headers())
+        return {"status": r.status_code, "body": r.text}
+
+
 @app.post("/admin/set-commands")
 def admin_set_commands():
     if not app.state.max_client:

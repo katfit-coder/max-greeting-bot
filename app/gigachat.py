@@ -1,7 +1,8 @@
 import base64
-import random
 import time
 import uuid
+import re
+import logging
 from dataclasses import dataclass
 from typing import Optional
 
@@ -29,6 +30,7 @@ class GigaChatClient:
         self.scope = scope
         self._token: Optional[str] = None
         self._token_exp: float = 0.0
+        self.logger = logging.getLogger("gigachat")
 
     def _get_token(self) -> str:
         if self._token and time.time() < self._token_exp - 60:
@@ -54,71 +56,112 @@ class GigaChatClient:
             self._token_exp = time.time() + 1700
         return self._token
 
-    def compose_image_scene(
-        self, occasion_label: str, style_label: str,
-        recipient_info: str = "", extra_wish: str = "",
-        custom_occasion: str = "",
-    ) -> str:
-        """
-        Генерирует уникальный промпт для открытки (30-60 слов, быстро).
-        Учитывает повод, стиль, информацию о получателе и пожелание.
-        """
-        token = self._get_token()
-        topic = custom_occasion or occasion_label
+    def _extract_file_id(self, text: str) -> Optional[str]:
+        """Извлекает file_id из тега <img src=\"...\">"""
+        # Ищем src="<uuid>"
+        match = re.search(r'src="([a-f0-9-]+)"', text)
+        if match:
+            return match.group(1)
+        # Ищем file_id в любом месте текста
+        match = re.search(r'([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})', text)
+        if match:
+            return match.group(1)
+        return None
 
-        sys_prompt = (
-            "Ты создаёшь уникальное визуальное описание для поздравительной открытки. "
-            "Правила: "
-            "1) Никогда не используй торты, шары, цветы, свечи, фейерверки, цифры возраста — это клише. "
-            "2) Придумай оригинальную метафору или неожиданную сцену (руки, интерьер, природа, абстракция, предметы). "
-            "3) Учитывай повод и контекст о получателе для персонализации. "
-            "4) На картинке НЕ должно быть текста, букв, цифр, надписей. "
-            "5) Каждый раз выбирай разный визуальный приём. "
-            "Ответ — одно предложение, 30-60 слов, на русском языке."
-        )
+    def generate_image(self, prompt: str, timeout: float = 90, retries: int = 3) -> Optional[GigaChatImage]:
+        """
+        Генерирует картинку через GigaChat.
+        ВАЖНО: нужно передавать function_call: "auto"!
+        """
+        http_timeout = httpx.Timeout(connect=15, read=timeout, write=30, pool=5)
+
+        for attempt in range(retries):
+            try:
+                token = self._get_token()
+                
+                # Формируем запрос на генерацию картинки
+                # Для лучшего результата добавляем английскую версию промпта
+                messages = [
+                    {
+                        "role": "user",
+                        "content": f"Нарисуй: {prompt}"
+                    }
+                ]
+                
+                # Можно добавить системный промпт для стилизации
+                # messages.insert(0, {"role": "system", "content": "Ты — художник-иллюстратор"})
+                
+                with httpx.Client(verify=False, timeout=http_timeout) as c:
+                    response = c.post(
+                        CHAT_URL,
+                        headers={
+                            "Authorization": f"Bearer {token}",
+                            "Content-Type": "application/json",
+                            "Accept": "application/json",
+                        },
+                        json={
+                            "model": "GigaChat-2-Max",
+                            "messages": messages,
+                            "function_call": "auto",  # ← КЛЮЧЕВОЙ ПАРАМЕТР!
+                            "temperature": 0.9,
+                            "max_tokens": 300,
+                        },
+                    )
+                    response.raise_for_status()
+                    data = response.json()
+                    
+                    self.logger.info(f"Response (attempt {attempt+1}): {str(data)[:500]}")
+                    
+                    # Получаем content из ответа
+                    content = data["choices"][0]["message"].get("content", "")
+                    
+                    # Извлекаем file_id
+                    file_id = self._extract_file_id(content)
+                    
+                    if not file_id:
+                        # Проверяем также в data_for_context
+                        if "data_for_context" in data["choices"][0]["message"]:
+                            for ctx in data["choices"][0]["message"]["data_for_context"]:
+                                if ctx.get("function_call", {}).get("name") == "text2image":
+                                    args = ctx["function_call"].get("arguments", {})
+                                    if isinstance(args, dict) and "file_id" in args:
+                                        file_id = args["file_id"]
+                                        break
+                        
+                    if not file_id:
+                        self.logger.warning(f"No file_id found in response: {content[:300]}")
+                        continue
+                    
+                    self.logger.info(f"Found file_id: {file_id}")
+                    
+                    # Скачиваем изображение
+                    img_response = c.get(
+                        f"{FILES_URL}/{file_id}/content",
+                        headers={
+                            "Authorization": f"Bearer {token}",
+                            "Accept": "application/jpg",
+                        },
+                    )
+                    img_response.raise_for_status()
+                    
+                    self.logger.info(f"Image downloaded, size={len(img_response.content)} bytes")
+                    
+                    return GigaChatImage(
+                        file_id=file_id,
+                        binary=img_response.content,
+                        content_type="image/jpeg"
+                    )
+                    
+            except Exception as e:
+                self.logger.warning(f"Attempt {attempt+1} failed: {e}")
+                if attempt == retries - 1:
+                    raise
+                time.sleep(2)  # Небольшая пауза перед повторной попыткой
         
-        user_prompt_parts = [f"Повод: {topic}.", f"Стиль: {style_label}."]
-        if recipient_info:
-            user_prompt_parts.append(f"О получателе: {recipient_info}.")
-        if extra_wish:
-            user_prompt_parts.append(f"Пожелание: {extra_wish}.")
-        user_prompt_parts.append("Опиши уникальную сцену для открытки.")
-        user_prompt = " ".join(user_prompt_parts)
-
-        with httpx.Client(verify=False, timeout=httpx.Timeout(connect=10, read=30, write=10, pool=5)) as c:
-            r = c.post(
-                CHAT_URL,
-                headers={
-                    "Authorization": f"Bearer {token}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": "GigaChat-2-Max",
-                    "messages": [
-                        {"role": "system", "content": sys_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    "temperature": 1.3,      # творческий разброс
-                    "max_tokens": 140,       # короткий ответ для скорости
-                },
-            )
-            r.raise_for_status()
-            scene = r.json()["choices"][0]["message"]["content"].strip()
-            
-            # Добавляем случайный художественный стиль для разнообразия
-            style_suffixes = [
-                " в стиле акварель",
-                " минималистичная иллюстрация",
-                " мягкие пастельные тона",
-                " в стиле цифровой живописи",
-                " в стиле карандашного рисунка",
-                "",
-                "",
-            ]
-            scene += random.choice(style_suffixes)
-            return scene
+        return None
 
     def generate_text(self, system: str, user: str, max_tokens: int = 700) -> str:
+        """Генерация текста через GigaChat"""
         token = self._get_token()
         with httpx.Client(verify=False, timeout=60) as c:
             r = c.post(
@@ -139,69 +182,3 @@ class GigaChatClient:
             )
             r.raise_for_status()
             return r.json()["choices"][0]["message"]["content"].strip()
-
-    def generate_image(self, description: str, timeout: float = 60, retries: int = 2) -> Optional[GigaChatImage]:
-        """
-        Генерирует уникальную картинку на основе промпта.
-        Оптимизирован для скорости (таймаут 60 сек) и вариативности.
-        """
-        import logging
-        log = logging.getLogger("gigachat")
-        
-        # Оставляем промпт как есть — не добавляем лишнего
-        prompt = description
-        http_timeout = httpx.Timeout(connect=10, read=timeout, write=20, pool=5)
-
-        last_exc = RuntimeError("no attempts")
-        for attempt in range(retries):
-            try:
-                token = self._get_token()
-                with httpx.Client(verify=False, timeout=http_timeout) as c:
-                    r = c.post(
-                        CHAT_URL,
-                        headers={
-                            "Authorization": f"Bearer {token}",
-                            "Content-Type": "application/json",
-                        },
-                        json={
-                            "model": "GigaChat-2-Max",
-                            "messages": [{"role": "user", "content": prompt}],
-                            "temperature": 0.9,      # высокая вариативность
-                            "max_tokens": 200,
-                        },
-                    )
-                    r.raise_for_status()
-                    data = r.json()
-                    content = data["choices"][0]["message"].get("content", "")
-                    log.info("GigaChat response (attempt %d): %s", attempt + 1, content[:300])
-
-                    file_id = self._extract_file_id(content)
-                    if not file_id:
-                        log.warning("No file_id found in response: %s", content[:200])
-                        continue
-                    
-                    log.info("Downloading image file_id=%s", file_id)
-                    img_r = c.get(
-                        f"{FILES_URL}/{file_id}/content",
-                        headers={"Authorization": f"Bearer {token}", "Accept": "application/jpg"},
-                    )
-                    img_r.raise_for_status()
-                    log.info("Image downloaded, size=%d bytes", len(img_r.content))
-                    return GigaChatImage(file_id=file_id, binary=img_r.content)
-                    
-            except Exception as e:
-                last_exc = e
-                log.warning("Attempt %d failed: %s", attempt + 1, e)
-                
-        raise last_exc
-
-    @staticmethod
-    def _extract_file_id(content: str) -> Optional[str]:
-        """Извлекает file_id из ответа GigaChat"""
-        if 'src="' not in content:
-            return None
-        start = content.find('src="') + len('src="')
-        end = content.find('"', start)
-        if end <= start:
-            return None
-        return content[start:end]

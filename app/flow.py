@@ -24,6 +24,18 @@ log = logging.getLogger("flow")
 
 EMAIL_RE = re.compile(r"^[\w.\-+]+@[\w\-]+\.[\w.\-]+$")
 
+# Сервер на Render в UTC, пользователи мыслят в МСК.
+# Все datetime в БД храним в UTC; на ввод/вывод конвертируем.
+MSK_OFFSET = timedelta(hours=3)
+
+
+def _msk_to_utc(d: datetime) -> datetime:
+    return d - MSK_OFFSET
+
+
+def _utc_to_msk(d: datetime) -> datetime:
+    return d + MSK_OFFSET
+
 
 def _occasion_buttons() -> list[list[dict]]:
     rows = []
@@ -364,22 +376,23 @@ def _handle_message(
         return
 
     if st.step == "await_schedule_datetime":
-        parsed = _parse_datetime(text)
-        if parsed is None:
+        parsed_utc = _parse_datetime(text)
+        if parsed_utc is None:
             max_client.send_message(
                 chat_id,
-                "❌ Не распознал дату. Примеры: `30.04`, `30.04 14:30`, `30.04.2027 09:00`.",
+                "❌ Не распознал дату. Примеры: `30.04`, `30.04 14:30`, `30.04.2027 09:00` (московское время).",
             )
             return
-        if parsed <= datetime.now():
-            max_client.send_message(chat_id, "❌ Дата должна быть в будущем. Введи ещё раз.")
+        if parsed_utc <= datetime.utcnow():
+            max_client.send_message(chat_id, "❌ Дата должна быть в будущем (МСК). Введи ещё раз.")
             return
-        st.scheduled_at = parsed
+        st.scheduled_at = parsed_utc  # храним в UTC
         st.step = "choose_channel"
         db.commit()
+        when_msk = _utc_to_msk(parsed_utc).strftime("%d.%m.%Y %H:%M")
         max_client.send_message(
             chat_id,
-            f"⏰ Запланировано на {parsed.strftime('%d.%m.%Y %H:%M')}.\n\nЧерез какой канал отправить в этот момент?",
+            f"⏰ Запланировано на {when_msk} МСК.\n\nЧерез какой канал отправить в этот момент?",
             buttons=_channel_buttons_no_schedule(),
         )
         return
@@ -882,11 +895,11 @@ def _send_final(st: UserState, contact: str, db: Session, max_client: MaxClient,
         st.step = "after_send"
         st.schedule_mode = 0
         db.commit()
-        when = st.scheduled_at.strftime("%d.%m.%Y %H:%M")
+        when = _utc_to_msk(st.scheduled_at).strftime("%d.%m.%Y %H:%M")
         max_client.send_message(
             st.chat_id,
-            f"✅ Поздравление запланировано на {when} → отправка в {('MAX' if st.channel=='max' else 'email')}: {contact}.\n\n"
-            "Оно уйдёт автоматически. Список запланированных можно посмотреть кнопкой «Запланированные».\n\n"
+            f"✅ Поздравление запланировано на {when} МСК → отправка в {('MAX' if st.channel.startswith('max') or st.channel=='bot_user' else 'email')}: {contact}.\n\n"
+            "Оно уйдёт автоматически. Список запланированных — кнопкой «Запланированные».\n\n"
             "Хочешь ещё что-то собрать или закончить?",
             buttons=_after_send_buttons(),
         )
@@ -952,7 +965,8 @@ _DATETIME_PATTERNS = [
 
 
 def _parse_datetime(s: str) -> Optional[datetime]:
-    now = datetime.now()
+    """Парсит ввод пользователя как московское время и возвращает UTC datetime."""
+    now_msk = _utc_to_msk(datetime.utcnow())
     for rx, kind in _DATETIME_PATTERNS:
         m = rx.match(s)
         if not m:
@@ -960,24 +974,24 @@ def _parse_datetime(s: str) -> Optional[datetime]:
         try:
             if kind == "dmyt":
                 d, mo, y, h, mi = map(int, m.groups())
-                return datetime(y, mo, d, h, mi)
+                return _msk_to_utc(datetime(y, mo, d, h, mi))
             if kind == "dmy":
                 d, mo, y = map(int, m.groups())
-                return datetime(y, mo, d, 9, 0)
+                return _msk_to_utc(datetime(y, mo, d, 9, 0))
             if kind == "dmt":
                 d, mo, h, mi = map(int, m.groups())
-                year = now.year
+                year = now_msk.year
                 candidate = datetime(year, mo, d, h, mi)
-                if candidate <= now:
+                if candidate <= now_msk:
                     candidate = datetime(year + 1, mo, d, h, mi)
-                return candidate
+                return _msk_to_utc(candidate)
             if kind == "dm":
                 d, mo = map(int, m.groups())
-                year = now.year
+                year = now_msk.year
                 candidate = datetime(year, mo, d, 9, 0)
-                if candidate <= now:
+                if candidate <= now_msk:
                     candidate = datetime(year + 1, mo, d, 9, 0)
-                return candidate
+                return _msk_to_utc(candidate)
         except ValueError:
             return None
     return None
@@ -996,19 +1010,19 @@ def _show_scheduled(st: UserState, db: Session, max_client: MaxClient) -> None:
     lines = [f"⏰ У тебя {len(items)} запланированных поздравлений:\n"]
     for it in items:
         occ = it.custom_occasion or OCCASION_LABELS.get(it.occasion, it.occasion or "—")
-        when = it.scheduled_at.strftime("%d.%m.%Y %H:%M")
-        ch = "MAX" if it.channel == "max" else "email"
-        lines.append(f"• {when} → {ch}: {it.recipient_contact} ({occ})")
+        when = _utc_to_msk(it.scheduled_at).strftime("%d.%m.%Y %H:%M")
+        ch = "MAX" if it.channel.startswith("max") or it.channel == "bot_user" else "email"
+        lines.append(f"• {when} МСК → {ch}: {it.recipient_contact} ({occ})")
     max_client.send_message(st.chat_id, "\n".join(lines))
 
 
 def process_due_scheduled(db: Session, max_client: MaxClient) -> dict:
     """Find pending ScheduledGreeting with scheduled_at <= now, send them, mark sent/failed.
     Called on every webhook and via /admin/tick. Returns summary dict."""
-    now = datetime.now()
+    now_utc = datetime.utcnow()
     due = (
         db.query(ScheduledGreeting)
-        .filter(ScheduledGreeting.scheduled_at <= now, ScheduledGreeting.status == "pending")
+        .filter(ScheduledGreeting.scheduled_at <= now_utc, ScheduledGreeting.status == "pending")
         .all()
     )
     sent = 0
@@ -1031,7 +1045,7 @@ def process_due_scheduled(db: Session, max_client: MaxClient) -> dict:
                         img_url = f"{base}/image/{item.image_id}.jpg"
                 max_client.send_message(int(item.recipient_contact), item.text, image_url=img_url)
             item.status = "sent"
-            item.sent_at = now
+            item.sent_at = now_utc
             sent += 1
             # Запись в SentGreeting для истории
             from app.models import SentGreeting
@@ -1053,7 +1067,7 @@ def process_due_scheduled(db: Session, max_client: MaxClient) -> dict:
             try:
                 max_client.send_message(
                     item.chat_id,
-                    f"📤 Запланированное поздравление ({item.scheduled_at.strftime('%d.%m %H:%M')}) успешно отправлено → {item.recipient_contact}",
+                    f"📤 Запланированное поздравление ({_utc_to_msk(item.scheduled_at).strftime('%d.%m %H:%M')} МСК) успешно отправлено → {item.recipient_contact}",
                 )
             except Exception:
                 pass

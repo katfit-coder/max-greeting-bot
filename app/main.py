@@ -67,7 +67,7 @@ def health():
 
 @app.get("/version")
 def version():
-    return {"build": "2026-04-24-v15-bot-user-directory"}
+    return {"build": "2026-04-25-v16-utc-msk-fix"}
 
 
 def _process_update_in_bg(update: dict) -> None:

@@ -199,6 +199,56 @@ class GigaChatClient:
         
         return None
 
+    def compose_image_scene(
+        self, occasion_label: str, style_label: str,
+        recipient_info: str = "", extra_wish: str = "",
+        custom_occasion: str = "",
+    ) -> str:
+        """Универсальный «арт-директор»: придумывает уникальную сцену под открытку
+        исключительно на основе входов. Без per-occasion веток."""
+        token = self._get_token()
+        topic = custom_occasion or occasion_label
+
+        sys_prompt = (
+            "Ты — креативный арт-директор поздравительных открыток. "
+            "На входе ты получаешь: повод поздравления, стиль и опционально контекст о получателе. "
+            "На выходе: ОДНА уникальная сцена для иллюстрации в 1–2 предложениях (40–70 слов). "
+            "Жёсткие правила: "
+            "1) Сцена должна на 100% соответствовать данному поводу — не подмешивай элементы из других праздников и не используй универсальные клише поздравительных открыток (торт со свечами, воздушные шары, цифры возраста, букеты роз, фейерверк), если повод сам не подразумевает их буквально. "
+            "2) Используй контекст получателя для индивидуальной детали. "
+            "3) Каждый раз выбирай разный визуальный приём: интерьер, метафора, характерный предмет, руки крупным планом, пейзаж, абстракция, минимализм. "
+            "4) На изображении не должно быть НИКАКОГО текста, букв, цифр, надписей, слоганов или ярлыков. "
+            "Выдай только сам текст описания сцены, без вступлений, кавычек или инструкций."
+        )
+        user_prompt_parts = [f"Повод: {topic}.", f"Стиль: {style_label}."]
+        if recipient_info:
+            user_prompt_parts.append(f"О получателе: {recipient_info}.")
+        if extra_wish:
+            user_prompt_parts.append(f"Пожелание: {extra_wish}.")
+        user_prompt_parts.append("Опиши уникальную сцену открытки.")
+        user_prompt = " ".join(user_prompt_parts)
+
+        with httpx.Client(verify=False, timeout=httpx.Timeout(connect=15, read=40, write=20, pool=5)) as c:
+            r = c.post(
+                CHAT_URL,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                },
+                json={
+                    "model": "GigaChat-2-Max",
+                    "messages": [
+                        {"role": "system", "content": sys_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    "temperature": 1.0,
+                    "max_tokens": 220,
+                },
+            )
+            r.raise_for_status()
+            return r.json()["choices"][0]["message"]["content"].strip()
+
     def generate_text(self, system: str, user: str, max_tokens: int = 700) -> str:
         """Генерация текста"""
         token = self._get_token()

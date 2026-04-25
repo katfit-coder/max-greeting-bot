@@ -348,98 +348,38 @@ def build_image_prompt(occasion_key: str, style_key: str,
                        scene: str = "",
                        seed: int = None,
                        regen_counter: int = 0) -> str:
-    """Короткая версия, чтобы GigaChat не задыхался. Макс ~200 символов.
-    Берём: один вариант описания повода + ОДИН визуальный хинт из контекста + ОДИН стиль.
-    """
+    """Универсальный image-промпт. Никаких per-occasion ветвей.
+    Содержание сцены приходит из compose_image_scene (арт-директор) — оно учитывает повод и контекст.
+    Здесь только обёртка: сцена + стиль + универсальное правило «без текста»."""
     import random as _r
     if seed is None:
         seed = _r.randint(1, 1_000_000) + regen_counter
     _r.seed(seed)
 
-    # Если scene уже сгенерирована арт-директором (compose_image_scene в gigachat.py) —
-    # она и есть главное содержание. Иначе используем тематический fallback.
+    # человекочитаемое название повода (без эмодзи) — на случай если scene пустая (fallback)
     if occasion_key == "custom" and custom_occasion:
         occasion_label = custom_occasion[:80]
     else:
-        occasion_label = OCCASION_LABELS.get(occasion_key, occasion_key)
-        occasion_label_clean = occasion_label.lstrip(" 🎂🎄🌷🎖💻🙏📈🏆🤝🚀☀️🕊🇷🇺🏴📚🍎📜📖🌾🎪🕌").strip()
-        occasion_label = occasion_label_clean or occasion_label
+        raw = OCCASION_LABELS.get(occasion_key, occasion_key)
+        occasion_label = raw.lstrip(" 🎂🎄🌷🎖💻🙏📈🏆🤝🚀☀️🕊🇷🇺🏴📚🍎📜📖🌾🎪🕌").strip() or raw
 
-    # запреты на «лишние» элементы — типичные галлюцинации модели
-    NEGATIVES_BY_OCCASION = {
-        "promotion": "НЕ рисуй торт, свечи, воздушные шары, цветы.",
-        "thanks": "НЕ рисуй торт, свечи, ёлку.",
-        "project_success": "НЕ рисуй торт, свечи, ёлку.",
-        "work_anniversary": "НЕ рисуй ёлку, цветы.",
-        "motivation": "НЕ рисуй торт, свечи, воздушные шары, ёлку.",
-        "new_colleague": "НЕ рисуй торт, свечи, воздушные шары, ёлку.",
-        "teacher_day": "НЕ рисуй торт, ёлку, воздушные шары.",
-        "programmer_day": "НЕ рисуй торт, свечи, ёлку, цветы.",
-        "mar8": "НЕ рисуй торт, ёлку.",
-        "feb23": "НЕ рисуй торт, свечи, ёлку, цветы.",
-        "victory_day": "НЕ рисуй торт, свечи, воздушные шары, ёлку.",
-        "russia_day": "НЕ рисуй торт, ёлку.",
-        "flag_day": "НЕ рисуй торт, ёлку.",
-        "knowledge_day": "НЕ рисуй торт, ёлку.",
-        "unity_day": "НЕ рисуй торт, ёлку.",
-        "constitution_day": "НЕ рисуй торт, ёлку.",
-        "kazan_day": "НЕ рисуй торт, ёлку.",
-        "sabantuy": "НЕ рисуй торт, ёлку, западные элементы.",
-        "tatarstan_day": "НЕ рисуй торт, ёлку.",
-        "tatarstan_constitution": "НЕ рисуй торт, ёлку.",
-        "tatar_language_day": "НЕ рисуй торт, ёлку, западные элементы.",
-    }
-    negatives = NEGATIVES_BY_OCCASION.get(occasion_key, "")
-    # base оставляем только как fallback-якорь повода — основной контент придёт через scene
-    base = f"Повод: {occasion_label}."
-
-    # ОДИН визуальный хинт из контекста (только первое совпадение)
-    hint = ""
-    info_lower = (recipient_info or "").lower() + " " + (extra_wish or "").lower()
-    single_hints = {
-        "кофе": "чашка кофе",
-        "путешеств": "чемодан, карта мира",
-        "спорт": "спортивная атрибутика",
-        "футбол": "футбольный мяч",
-        "музык": "музыкальные ноты",
-        "книг": "стопка книг",
-        "чтени": "стопка книг",
-        "программ": "код на экране",
-        "разработ": "код на экране",
-        "дизайн": "палитра красок",
-        "игр": "игровой контроллер",
-        "кино": "кинолента",
-        "рисова": "кисти и краски",
-        "фотограф": "фотоаппарат",
-        "семь": "семейное тепло",
-        "здоров": "свежесть, солнечный свет",
-        "счасть": "радостные лица",
-        "успех": "победный жест",
-        "любов": "сердце",
-    }
-    for kw, visual in single_hints.items():
-        if kw in info_lower:
-            hint = f", рядом {visual}"
-            break
-
-    # стиль — один короткий хинт
     style_variants = STYLE_VISUAL_VARIANTS.get(style_key, STYLE_VISUAL_VARIANTS.get("friendly", ["дружеский стиль"]))
     style_part = _r.choice(style_variants) if isinstance(style_variants, list) else style_variants
 
-    regen_suffix = " Другая композиция." if regen_counter > 0 else ""
-
-    parts = ["Нарисуй уникальную поздравительную открытку.", base]
+    parts = ["Нарисуй уникальную поздравительную открытку."]
     if scene:
         # сцена от арт-директора — главное содержание
         parts.append(f"Сцена: {scene.strip()}")
-    elif hint:
-        parts.append(f"Деталь сцены: {hint.lstrip(', ')}.")
+    else:
+        # fallback если арт-директор не отработал: даём только сам повод и просим креативить
+        parts.append(f"Повод: {occasion_label}.")
+        if recipient_info:
+            parts.append(f"Контекст: {recipient_info[:200]}.")
+        parts.append("Придумай уникальную композицию, точно соответствующую поводу. Не используй стандартные клише.")
     parts.append(f"Художественный стиль: {style_part}.")
-    if negatives:
-        parts.append(negatives)
-    parts.append("Без текста и надписей на изображении. Формат 1024x1024.")
-    if regen_suffix:
-        parts.append(regen_suffix)
+    parts.append("ВАЖНО: на изображении не должно быть никакого текста, букв, цифр, надписей или слоганов. Формат 1024x1024.")
+    if regen_counter > 0:
+        parts.append("Сделай иначе, чем в прошлой генерации.")
     return " ".join(parts)
 
 

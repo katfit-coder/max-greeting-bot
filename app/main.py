@@ -1,9 +1,11 @@
+import asyncio
 import logging
 from collections import deque
 from contextlib import asynccontextmanager
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.responses import Response
+from starlette.concurrency import run_in_threadpool
 
 from app.config import settings
 from app.flow import handle_update, process_due_scheduled
@@ -42,7 +44,42 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             log.warning("set_commands failed (likely not supported by MAX): %s", e)
 
-    yield
+    # внутренний таймер: каждые 60 сек обрабатывает запланированные.
+    # ВАЖНО: на бесплатном Render сервис засыпает через 15 мин — таймер останавливается.
+    # Чтобы он работал постоянно, нужно держать сервис разбужённым (см. .github/workflows/tick.yml).
+    async def _scheduler_loop():
+        log.info("scheduler loop started (every 60s)")
+        while True:
+            try:
+                await asyncio.sleep(60)
+                if not app.state.max_client:
+                    continue
+
+                def _run():
+                    db = SessionLocal()
+                    try:
+                        return process_due_scheduled(db, app.state.max_client)
+                    finally:
+                        db.close()
+
+                result = await run_in_threadpool(_run)
+                if result.get("processed", 0) > 0:
+                    log.info("scheduler tick: %s", result)
+            except asyncio.CancelledError:
+                log.info("scheduler loop cancelled")
+                raise
+            except Exception:
+                log.exception("scheduler loop error")
+
+    task = asyncio.create_task(_scheduler_loop())
+    try:
+        yield
+    finally:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
 
 app = FastAPI(title="MAX Greeting Bot", lifespan=lifespan)
@@ -67,7 +104,7 @@ def health():
 
 @app.get("/version")
 def version():
-    return {"build": "2026-04-25-v17-tick-index"}
+    return {"build": "2026-04-25-v18-internal-timer-gh-cron"}
 
 
 def _process_update_in_bg(update: dict) -> None:

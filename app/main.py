@@ -29,6 +29,19 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             log.warning("webhook subscription failed: %s", e)
 
+        # регистрируем меню команд (если MAX поддерживает PATCH /me с commands)
+        try:
+            cmds = [
+                {"name": "start", "description": "Новое поздравление"},
+                {"name": "history", "description": "История отправленных"},
+                {"name": "scheduled", "description": "Запланированные"},
+                {"name": "cancel", "description": "Отменить текущий диалог"},
+            ]
+            r = app.state.max_client.set_commands(cmds)
+            log.info("set_commands: %s", r)
+        except Exception as e:
+            log.warning("set_commands failed (likely not supported by MAX): %s", e)
+
     yield
 
 
@@ -54,7 +67,7 @@ def health():
 
 @app.get("/version")
 def version():
-    return {"build": "2026-04-24-v12-universal-image-prompt"}
+    return {"build": "2026-04-24-v13-welcome-quick-actions-contact-share"}
 
 
 def _process_update_in_bg(update: dict) -> None:

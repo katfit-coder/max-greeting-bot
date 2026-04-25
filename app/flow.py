@@ -57,6 +57,18 @@ def _after_send_buttons() -> list[list[dict]]:
     ]
 
 
+def _quick_actions() -> list[list[dict]]:
+    """Универсальные действия — для использования в любых текстовых ответах,
+    где раньше упоминались /start /cancel /history."""
+    return [
+        [
+            {"type": "callback", "text": "🆕 Начать заново", "payload": "restart"},
+            {"type": "callback", "text": "📜 История", "payload": "history"},
+        ],
+        [{"type": "callback", "text": "◀️ Отмена", "payload": "cancel"}],
+    ]
+
+
 def _style_buttons() -> list[list[dict]]:
     rows = []
     current: list[dict] = []
@@ -97,10 +109,13 @@ def _channel_buttons_no_schedule() -> list[list[dict]]:
 def _channel_buttons() -> list[list[dict]]:
     return [
         [
-            {"type": "callback", "text": "💬 Отправить в MAX", "payload": "channel:max"},
-            {"type": "callback", "text": "✉️ На email", "payload": "channel:email"},
+            {"type": "callback", "text": "💬 В MAX по chat_id", "payload": "channel:max"},
+            {"type": "callback", "text": "📱 Из контактов MAX", "payload": "channel:max_contact"},
         ],
-        [{"type": "callback", "text": "⏰ Запланировать на дату", "payload": "schedule"}],
+        [
+            {"type": "callback", "text": "✉️ На email", "payload": "channel:email"},
+            {"type": "callback", "text": "⏰ Запланировать", "payload": "schedule"},
+        ],
         [{"type": "callback", "text": "◀️ Отмена", "payload": "cancel"}],
     ]
 
@@ -140,14 +155,35 @@ def _handle_bot_started(update: dict, db: Session, max_client: MaxClient) -> Non
     if not chat_id or not user_id:
         log.warning("bot_started without chat_id/user_id: %s", update)
         return
+    # детектим первый запуск: state ещё не создан
+    existing = db.query(UserState).filter(UserState.user_id == user_id).first()
+    is_first_time = existing is None
     st = _get_or_create_state(db, user_id, chat_id)
     st.step = "choose_occasion"
     db.commit()
-    max_client.send_message(
-        chat_id,
-        "👋 Привет! Я помогу собрать красивое поздравление за пару кликов.\n\nВыбери повод:",
-        buttons=_occasion_buttons(),
-    )
+
+    if is_first_time:
+        max_client.send_message(
+            chat_id,
+            "👋 Привет! Я бот-помощник в создании поздравлений по любому поводу.\n\n"
+            "Я умею:\n"
+            "• подбирать тёплые слова под нужный стиль и повод\n"
+            "• рисовать индивидуальную открытку под получателя\n"
+            "• отправлять поздравление в MAX, на email или планировать на дату\n"
+            "• хранить историю всех твоих отправок\n\n"
+            "📌 Несколько простых правил, чтобы я не путался:\n"
+            "1. После нажатия кнопки **подожди ответ** — генерация может занимать до минуты.\n"
+            "2. Не нажимай несколько кнопок подряд, особенно из старых сообщений.\n"
+            "3. Если что-то пошло не так — нажми «Отмена» или жми кнопку «Начать заново».\n\n"
+            "Поехали! Выбери повод:",
+            buttons=_occasion_buttons(),
+        )
+    else:
+        max_client.send_message(
+            chat_id,
+            "👋 С возвращением! Выбери повод для нового поздравления:",
+            buttons=_occasion_buttons(),
+        )
 
 
 def _extract_from(obj: dict) -> tuple[Optional[int], Optional[int]]:
@@ -184,6 +220,22 @@ def _extract_from(obj: dict) -> tuple[Optional[int], Optional[int]]:
             or obj.get("user_id")
         )
     return chat_id, user_id
+
+
+def _extract_shared_contact(msg: dict) -> Optional[dict]:
+    """Если в сообщении есть прикреплённый контакт — извлечь его данные.
+    Возвращает {user_id, name, phone, has_bot} или None."""
+    attachments = (msg.get("body") or {}).get("attachments") or []
+    for att in attachments:
+        if att.get("type") == "contact":
+            payload = att.get("payload") or {}
+            return {
+                "user_id": payload.get("user_id") or payload.get("contact_id"),
+                "name": payload.get("name") or payload.get("first_name") or "",
+                "phone": payload.get("phone") or "",
+                "has_bot": payload.get("has_bot", False),
+            }
+    return None
 
 
 def _handle_message(
@@ -225,7 +277,11 @@ def _handle_message(
     if text.lower().startswith("/cancel"):
         st.step = "idle"
         db.commit()
-        max_client.send_message(chat_id, "Ок, отменил. Напиши /start чтобы начать заново.")
+        max_client.send_message(
+            chat_id,
+            "Ок, отменил. Чем заняться дальше?",
+            buttons=_quick_actions(),
+        )
         return
 
     if st.step == "await_custom_occasion":
@@ -275,6 +331,21 @@ def _handle_message(
         return
 
     if st.step == "await_contact":
+        # MAX: получили прикреплённый контакт через нативный picker
+        contact = _extract_shared_contact(msg)
+        if contact and st.channel in ("max", "max_contact"):
+            target = contact.get("user_id")
+            name = contact.get("name") or "получатель"
+            if not target:
+                max_client.send_message(
+                    chat_id,
+                    f"❌ Контакт {name} не привязан к MAX-аккаунту (есть только телефон). "
+                    "Пересылка боту через MAX невозможна — выбери другого получателя или email.",
+                )
+                return
+            _send_final(st, str(target), db, max_client, recipient_label=name)
+            return
+
         if st.channel == "email":
             if not EMAIL_RE.match(text):
                 max_client.send_message(chat_id, "❌ Похоже, это не email. Введи адрес вида name@domain.ru")
@@ -287,10 +358,20 @@ def _handle_message(
                 max_client.send_message(chat_id, "❌ Для MAX укажи числовой chat_id получателя. Для демо можно отправить самому себе — твой chat_id: " + str(chat_id))
                 return
             _send_final(st, str(target_chat_id), db, max_client)
+        elif st.channel == "max_contact":
+            # пользователь начал писать текст вместо использования кнопки
+            max_client.send_message(
+                chat_id,
+                "Используй кнопку «📲 Выбрать получателя» из предыдущего сообщения, чтобы открыть список контактов MAX.",
+            )
         return
 
     if text.lower().startswith("/"):
-        max_client.send_message(chat_id, "Команды: /start — новое поздравление · /history — последние отправки · /cancel — отмена")
+        max_client.send_message(
+            chat_id,
+            "Доступные действия:",
+            buttons=_quick_actions(),
+        )
         return
 
     # любой другой текст в idle → показываем главное меню
@@ -341,7 +422,8 @@ def _handle_callback(
             max_client.send_message(
                 chat_id,
                 "⚠️ Эта кнопка из старого сообщения — она уже не актуальна.\n"
-                "Напиши /start, чтобы начать заново, или /cancel, чтобы сбросить.",
+                "Используй кнопки ниже:",
+                buttons=_quick_actions(),
             )
             return
 
@@ -435,6 +517,18 @@ def _handle_callback(
         db.commit()
         if st.channel == "email":
             max_client.send_message(chat_id, "📧 Введи email получателя:")
+        elif st.channel == "max_contact":
+            # просим пользователя поделиться контактом — MAX откроет нативный picker
+            max_client.send_message(
+                chat_id,
+                "📱 Нажми кнопку ниже и выбери получателя из своих контактов в MAX.\n"
+                "Получатель должен иметь установленный MAX и хотя бы раз запускать этого бота "
+                "(иначе мессенджер не позволит отправить ему сообщение от бота).",
+                buttons=[
+                    [{"type": "request_contact", "text": "📲 Выбрать получателя"}],
+                    [{"type": "callback", "text": "◀️ Отмена", "payload": "cancel"}],
+                ],
+            )
         else:
             max_client.send_message(
                 chat_id,
@@ -446,7 +540,7 @@ def _handle_callback(
         st.step = "idle"
         st.schedule_mode = 0
         db.commit()
-        max_client.send_message(chat_id, "Отменено. /start чтобы начать заново.")
+        max_client.send_message(chat_id, "Отменено.", buttons=_quick_actions())
         return
 
     if payload == "schedule":
@@ -473,7 +567,8 @@ def _handle_callback(
         db.commit()
         max_client.send_message(
             chat_id,
-            "🏁 Готово на сегодня! Отличной работы.\n\nНапиши /start когда захочешь собрать новое поздравление, или /history — посмотреть отправленные.",
+            "🏁 Готово на сегодня! Отличной работы.\n\nКогда захочешь — используй кнопки ниже.",
+            buttons=_quick_actions(),
         )
         return
 
@@ -646,7 +741,8 @@ def _regen_image(
     )
 
 
-def _send_final(st: UserState, contact: str, db: Session, max_client: MaxClient) -> None:
+def _send_final(st: UserState, contact: str, db: Session, max_client: MaxClient,
+                recipient_label: str = "") -> None:
     # Если пользователь выбрал отложенную отправку — сохраняем, не шлём сейчас
     if st.schedule_mode and st.scheduled_at:
         img_id = None
@@ -675,7 +771,7 @@ def _send_final(st: UserState, contact: str, db: Session, max_client: MaxClient)
         max_client.send_message(
             st.chat_id,
             f"✅ Поздравление запланировано на {when} → отправка в {('MAX' if st.channel=='max' else 'email')}: {contact}.\n\n"
-            "Оно уйдёт автоматически. Ты можешь посмотреть запланированные через /scheduled.\n\n"
+            "Оно уйдёт автоматически. Список запланированных можно посмотреть кнопкой «Запланированные».\n\n"
             "Хочешь ещё что-то собрать или закончить?",
             buttons=_after_send_buttons(),
         )
@@ -689,7 +785,8 @@ def _send_final(st: UserState, contact: str, db: Session, max_client: MaxClient)
         else:
             image_url = _latest_image_url(db, st.generated_image)
             max_client.send_message(int(contact), st.generated_text, image_url=image_url)
-            confirm = f"✅ Поздравление отправлено в MAX (chat_id={contact})"
+            who = recipient_label or f"chat_id={contact}"
+            confirm = f"✅ Поздравление отправлено в MAX → {who}"
     except EmailError as e:
         max_client.send_message(st.chat_id, f"❌ {e}")
         return
@@ -882,7 +979,7 @@ def _show_history(st: UserState, db: Session, max_client: MaxClient) -> None:
     for it in items:
         occ_label = it.custom_occasion or OCCASION_LABELS.get(it.occasion, it.occasion or "—")
         style_label = STYLE_LABELS.get(it.style, it.style or "—")
-        channel_label = {"max": "MAX", "email": "email"}.get(it.channel, it.channel or "—")
+        channel_label = {"max": "MAX", "max_contact": "MAX (контакт)", "email": "email"}.get(it.channel, it.channel or "—")
         when = it.created_at.strftime("%d.%m.%Y %H:%M") if it.created_at else "—"
 
         details = [f"🗓 {when}"]

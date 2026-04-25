@@ -110,3 +110,16 @@ class MaxClient:
         with httpx.Client(timeout=15) as c:
             r = c.get(self._url("/subscriptions"), headers=self._headers())
             return {"status": r.status_code, "body": r.text}
+
+    def set_commands(self, commands: list[dict]) -> dict:
+        """Регистрирует меню команд в чате (которое появляется в поле ввода).
+        commands: [{"name": "start", "description": "Начать заново"}, ...]
+        Если MAX не поддерживает — отвечает 4xx, мы это просто логируем."""
+        # API MAX патчит профиль бота — там есть поле commands
+        with httpx.Client(timeout=15) as c:
+            r = c.patch(
+                self._url("/me"),
+                headers=self._headers(),
+                json={"commands": commands},
+            )
+            return {"status": r.status_code, "body": r.text[:300]}

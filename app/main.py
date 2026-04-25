@@ -54,7 +54,7 @@ def health():
 
 @app.get("/version")
 def version():
-    return {"build": "2026-04-24-v10-hardened-image-prompt-no-cake"}
+    return {"build": "2026-04-24-v11-art-director-scene"}
 
 
 def _process_update_in_bg(update: dict) -> None:

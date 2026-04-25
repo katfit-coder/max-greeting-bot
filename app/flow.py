@@ -47,12 +47,12 @@ def _recipient_info_buttons() -> list[list[dict]]:
 def _after_send_buttons() -> list[list[dict]]:
     return [
         [
-            {"type": "callback", "text": "📤 Отправить ещё кому-то", "payload": "resend"},
-            {"type": "callback", "text": "🆕 Новое поздравление", "payload": "restart"},
+            {"type": "callback", "text": "📤 Отправить ещё", "payload": "resend"},
+            {"type": "callback", "text": "🆕 Новое 🎉", "payload": "restart"},
         ],
         [
             {"type": "callback", "text": "📜 История", "payload": "history"},
-            {"type": "callback", "text": "🏁 Завершить на сегодня", "payload": "finish"},
+            {"type": "callback", "text": "🏁 Завершить", "payload": "finish"},
         ],
     ]
 
@@ -65,7 +65,7 @@ def _quick_actions() -> list[list[dict]]:
             {"type": "callback", "text": "🆕 Начать заново", "payload": "restart"},
             {"type": "callback", "text": "📜 История", "payload": "history"},
         ],
-        [{"type": "callback", "text": "◀️ Отмена", "payload": "cancel"}],
+        [{"type": "callback", "text": "🚫 Отмена", "payload": "cancel"}],
     ]
 
 
@@ -85,7 +85,7 @@ def _style_buttons() -> list[list[dict]]:
 def _preview_buttons() -> list[list[dict]]:
     return [
         [
-            {"type": "callback", "text": "🔄 Перегенерировать текст", "payload": "regen:text"},
+            {"type": "callback", "text": "🔄 Новый текст", "payload": "regen:text"},
             {"type": "callback", "text": "🎨 Новая картинка", "payload": "regen:image"},
         ],
         [
@@ -100,10 +100,10 @@ def _channel_buttons_no_schedule() -> list[list[dict]]:
     return [
         [
             {"type": "callback", "text": "✉️ На email", "payload": "channel:email"},
-            {"type": "callback", "text": "👥 Кому-то из бота", "payload": "channel:bot_user"},
+            {"type": "callback", "text": "👥 Коллегам", "payload": "channel:bot_user"},
         ],
-        [{"type": "callback", "text": "📱 Себе в MAX (тест)", "payload": "channel:max_self"}],
-        [{"type": "callback", "text": "◀️ Отмена", "payload": "cancel"}],
+        [{"type": "callback", "text": "📱 Себе в MAX", "payload": "channel:max_self"}],
+        [{"type": "callback", "text": "🚫 Отмена", "payload": "cancel"}],
     ]
 
 
@@ -111,15 +111,15 @@ def _channel_buttons() -> list[list[dict]]:
     return [
         [
             {"type": "callback", "text": "✉️ На email", "payload": "channel:email"},
-            {"type": "callback", "text": "👥 Кому-то из бота", "payload": "channel:bot_user"},
+            {"type": "callback", "text": "👥 Коллегам", "payload": "channel:bot_user"},
         ],
         [
-            {"type": "callback", "text": "📱 Себе в MAX (тест)", "payload": "channel:max_self"},
+            {"type": "callback", "text": "📱 Себе в MAX", "payload": "channel:max_self"},
             {"type": "callback", "text": "⏰ Запланировать", "payload": "schedule"},
         ],
         [
-            {"type": "callback", "text": "📦 Сохранить в историю", "payload": "save_only"},
-            {"type": "callback", "text": "◀️ Отмена", "payload": "cancel"},
+            {"type": "callback", "text": "📦 Запомнить", "payload": "save_only"},
+            {"type": "callback", "text": "🚫 Отмена", "payload": "cancel"},
         ],
     ]
 
@@ -226,7 +226,7 @@ def _handle_bot_started(update: dict, db: Session, max_client: MaxClient) -> Non
             "• отправлять поздравление в MAX, на email или планировать на дату\n"
             "• хранить историю всех твоих отправок\n\n"
             "📌 Несколько простых правил, чтобы я не путался:\n"
-            "1. После нажатия кнопки **подожди ответ** — генерация может занимать до минуты.\n"
+            "1. После нажатия кнопки *подожди ответ* — генерация может занимать до минуты.\n"
             "2. Не нажимай несколько кнопок подряд, особенно из старых сообщений.\n"
             "3. Если что-то пошло не так — нажми «Отмена» или жми кнопку «Начать заново».\n\n"
             "Поехали! Выбери повод:",

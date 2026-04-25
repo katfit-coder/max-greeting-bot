@@ -166,9 +166,8 @@ class GigaChatClient:
                         json={
                             "model": "GigaChat-2-Max",
                             "messages": [{"role": "user", "content": prompt}],
-                            "temperature": 1.2,      # высокая вариативность
-                            "max_tokens": 300,
-                            "function_call": "none",  # отключаем авто-функции
+                            "temperature": 0.9,      # высокая вариативность
+                            "max_tokens": 200,
                         },
                     )
                     r.raise_for_status()

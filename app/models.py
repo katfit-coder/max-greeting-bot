@@ -28,7 +28,6 @@ class UserState(Base):
     channel = Column(String, default="")
     generated_text = Column(Text, default="")
     generated_image = Column(LargeBinary, nullable=True)
-    generated_image_uuid = Column(String, default="")  # для переиспользования URL без новых INSERT
     schedule_mode = Column(Integer, default=0)
     scheduled_at = Column(DateTime, nullable=True)
     display_name = Column(String, default="")
@@ -43,7 +42,6 @@ class ScheduledGreeting(Base):
     scheduled_at = Column(DateTime, nullable=False, index=True)
     channel = Column(String, nullable=False)
     recipient_contact = Column(String, nullable=False)
-    recipient_label = Column(String, default="")  # имя получателя (для удобного показа в /scheduled)
     text = Column(Text, nullable=False)
     image_id = Column(Integer, nullable=True)
     occasion = Column(String, default="")
@@ -91,9 +89,7 @@ def init_db() -> None:
             conn.execute(_t("CREATE INDEX IF NOT EXISTS ix_scheduled_status_at ON scheduled_greetings(status, scheduled_at)"))
     except Exception:
         pass
-    # ВАЖНО: значения в new_columns должны быть строковыми константами,
-    # НЕ ввод от пользователя. ALTER TABLE не поддерживает binding параметров —
-    # любые динамические значения здесь = SQL-инъекция. Не трогать без нужды.
+    # lightweight migration: add new columns if table already exists from previous deploys
     from sqlalchemy import text
     new_columns = [
         ("hosted_images", "uuid", "TEXT"),
@@ -102,8 +98,6 @@ def init_db() -> None:
         ("user_states", "schedule_mode", "INTEGER DEFAULT 0"),
         ("user_states", "scheduled_at", "DATETIME"),
         ("user_states", "display_name", "TEXT DEFAULT ''"),
-        ("user_states", "generated_image_uuid", "TEXT DEFAULT ''"),
-        ("scheduled_greetings", "recipient_label", "TEXT DEFAULT ''"),
         ("sent_greetings", "custom_occasion", "TEXT DEFAULT ''"),
         ("sent_greetings", "recipient_info", "TEXT DEFAULT ''"),
         ("sent_greetings", "extra_wish", "TEXT DEFAULT ''"),

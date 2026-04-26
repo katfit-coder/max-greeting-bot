@@ -742,7 +742,21 @@ def _generate_and_preview(
     )
     max_client.send_message(st.chat_id, "🎨 Теперь рисую открытку (до минуты)...")
 
-    # 2) картинка — медленно, отдельным сообщением (один прямой вызов GigaChat)
+    # 2) картинка — медленно, отдельным сообщением
+    # 2a) сначала просим арт-директора (тот же GigaChat, но в текстовом режиме) придумать сцену
+    scene = ""
+    try:
+        scene = giga.compose_image_scene(
+            occasion_label=st.custom_occasion or OCCASION_LABELS.get(st.occasion, st.occasion),
+            style_label=STYLE_LABELS.get(st.style, st.style),
+            recipient_info=st.recipient_info or "",
+            extra_wish=st.extra_wish or "",
+            custom_occasion=st.custom_occasion or "",
+        )
+        log.info("scene: %s", scene[:200])
+    except Exception as e:
+        log.warning("scene compose failed: %s — fallback to keyword prompt", e)
+
     image_url: Optional[str] = None
     try:
         img = giga.generate_image(build_image_prompt(
@@ -752,6 +766,7 @@ def _generate_and_preview(
             recipient_info=st.recipient_info or "",
             extra_wish=st.extra_wish or "",
             custom_occasion=st.custom_occasion or "",
+            scene=scene,
         ))
         if img is not None:
             st.generated_image = img.binary
@@ -814,6 +829,18 @@ def _regen_image(
     if giga is None:
         max_client.send_message(st.chat_id, "⚠️ GigaChat не настроен (нет GIGACHAT_AUTH_KEY).")
         return
+    scene = ""
+    try:
+        scene = giga.compose_image_scene(
+            occasion_label=st.custom_occasion or OCCASION_LABELS.get(st.occasion, st.occasion),
+            style_label=STYLE_LABELS.get(st.style, st.style),
+            recipient_info=st.recipient_info or "",
+            extra_wish=st.extra_wish or "",
+            custom_occasion=st.custom_occasion or "",
+        )
+    except Exception as e:
+        log.warning("scene compose failed during regen: %s", e)
+
     try:
         img = giga.generate_image(build_image_prompt(
             occasion_key=st.occasion,
@@ -822,6 +849,7 @@ def _regen_image(
             recipient_info=st.recipient_info or "",
             extra_wish=st.extra_wish or "",
             custom_occasion=st.custom_occasion or "",
+            scene=scene,
             regen_counter=int(datetime.now().timestamp()) % 10000,
         ))
     except Exception as e:

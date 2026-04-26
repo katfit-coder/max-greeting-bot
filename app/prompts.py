@@ -364,15 +364,20 @@ def build_image_prompt(occasion_key: str, style_key: str,
     style_variants = STYLE_VISUAL_VARIANTS.get(style_key, STYLE_VISUAL_VARIANTS.get("friendly", ["дружеский стиль"]))
     style_part = _r.choice(style_variants) if isinstance(style_variants, list) else style_variants
 
-    parts = [f"Нарисуй уникальную открытку. Повод: {occasion_label}."]
-    if recipient_info:
-        parts.append(f"Контекст получателя: {recipient_info[:200]}.")
-    if extra_wish:
-        parts.append(f"Настроение: {extra_wish[:120]}.")
-    parts.append(f"Стиль: {style_part}.")
-    parts.append("Без текста на изображении. 1024x1024.")
+    parts = ["Нарисуй уникальную поздравительную открытку."]
+    if scene:
+        # сцена от арт-директора — главное содержание
+        parts.append(f"Сцена: {scene.strip()}")
+    else:
+        # fallback если арт-директор не отработал: даём только сам повод и просим креативить
+        parts.append(f"Повод: {occasion_label}.")
+        if recipient_info:
+            parts.append(f"Контекст: {recipient_info[:200]}.")
+        parts.append("Придумай уникальную композицию, точно соответствующую поводу. Не используй стандартные клише.")
+    parts.append(f"Художественный стиль: {style_part}.")
+    parts.append("ВАЖНО: на изображении не должно быть никакого текста, букв, цифр, надписей или слоганов. Формат 1024x1024.")
     if regen_counter > 0:
-        parts.append("Другая композиция.")
+        parts.append("Сделай иначе, чем в прошлой генерации.")
     return " ".join(parts)
 
 

@@ -89,7 +89,8 @@ TEXT_SYSTEM = (
 
 def build_text_prompt(occasion_key: str, style_key: str, extra_wish: str = "",
                       recipient_name: str = "", sender_name: str = "",
-                      recipient_info: str = "", custom_occasion: str = "") -> str:
+                      recipient_info: str = "", custom_occasion: str = "",
+                      verified_fact: str = "") -> str:
     today = datetime.now().strftime("%d.%m")
 
     if occasion_key == "custom" and custom_occasion:
@@ -114,13 +115,15 @@ def build_text_prompt(occasion_key: str, style_key: str, extra_wish: str = "",
         parts.append(f"Подпись от: {sender_name}.")
     if extra_wish:
         parts.append(f"Учти дополнительное пожелание: {extra_wish}.")
-    parts.append(
-        "В самом конце через перенос строки добавь P.S. — одну короткую (1 предложение, до 100 символов) "
-        "интересную мелочь: либо неочевидный исторический факт, связанный с этой датой или поводом, "
-        "либо забавное наблюдение, либо мини-факт про получателя/его сферу, либо неожиданное число или цитата. "
-        "Каждый раз должен быть РАЗНЫЙ факт — выбирай разнообразно. "
-        "Оформи как «P.S. <факт>» (без слова «кстати»). Факт должен быть достоверным или явно метафоричным."
-    )
+    if verified_fact:
+        parts.append(
+            "В самом конце через перенос строки добавь P.S., в котором кратко (1 предложение) "
+            "перескажи СЛЕДУЮЩИЙ ПРОВЕРЕННЫЙ ФАКТ из Википедии о сегодняшней дате (используй ровно этот факт, "
+            "не додумывай детали и не меняй год):\n"
+            f"{verified_fact}\n"
+            "Оформи как «P.S. <факт>». Если факт не подходит к тону поздравления — просто опусти P.S."
+        )
+    # без verified_fact — НИКАКИХ P.S. с фактами, чтобы модель не галлюцинировала
     parts.append("Верни только чистый текст поздравления, без кавычек и пояснений.")
     return " ".join(parts)
 

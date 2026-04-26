@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.emailer import EmailError, send_greeting_email
+from app.facts import fetch_today_fact
 from app.gigachat import GigaChatClient
 from app.max_client import MaxClient
 from app.models import HostedImage, ScheduledGreeting, SentGreeting, UserState
@@ -712,6 +713,8 @@ def _generate_and_preview(
         )
         return
     # 1) текст — быстро
+    # тянем проверенный факт о сегодняшней дате из Википедии (необязательно)
+    verified = fetch_today_fact() or ""
     try:
         text = giga.generate_text(
             TEXT_SYSTEM,
@@ -720,6 +723,7 @@ def _generate_and_preview(
                 st.recipient_name, st.sender_name,
                 recipient_info=st.recipient_info or "",
                 custom_occasion=st.custom_occasion or "",
+                verified_fact=verified,
             ),
         )
     except Exception as e:
@@ -811,6 +815,7 @@ def _regen_text(
                 st.recipient_name, st.sender_name,
                 recipient_info=st.recipient_info or "",
                 custom_occasion=st.custom_occasion or "",
+                verified_fact=fetch_today_fact() or "",
             ),
         )
     except Exception as e:

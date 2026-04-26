@@ -57,6 +57,7 @@ class ScheduledGreeting(Base):
 class HostedImage(Base):
     __tablename__ = "hosted_images"
     id = Column(Integer, primary_key=True)
+    uuid = Column(String, unique=True, index=True, nullable=True)  # для cache-busting URL
     content = Column(LargeBinary, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -91,6 +92,7 @@ def init_db() -> None:
     # lightweight migration: add new columns if table already exists from previous deploys
     from sqlalchemy import text
     new_columns = [
+        ("hosted_images", "uuid", "TEXT"),
         ("user_states", "recipient_info", "TEXT DEFAULT ''"),
         ("user_states", "custom_occasion", "TEXT DEFAULT ''"),
         ("user_states", "schedule_mode", "INTEGER DEFAULT 0"),

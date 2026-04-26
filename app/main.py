@@ -104,7 +104,7 @@ def health():
 
 @app.get("/version")
 def version():
-    return {"build": "2026-04-25-v21-postgres-ready"}
+    return {"build": "2026-04-25-v22-uuid-image-urls"}
 
 
 def _process_update_in_bg(update: dict) -> None:
@@ -173,13 +173,23 @@ def admin_tick():
 
 
 @app.get("/image/{image_id}.jpg")
-def get_image(image_id: int):
+def get_image(image_id: str):
+    """Принимает либо UUID (новый формат, cache-busting), либо int id (legacy)."""
     db = SessionLocal()
     try:
-        img = db.query(HostedImage).filter(HostedImage.id == image_id).first()
+        img = (
+            db.query(HostedImage).filter(HostedImage.uuid == image_id).first()
+            if not image_id.isdigit()
+            else db.query(HostedImage).filter(HostedImage.id == int(image_id)).first()
+        )
         if not img:
             raise HTTPException(status_code=404)
-        return Response(content=img.content, media_type="image/jpeg")
+        # просим клиентов не кэшировать дольше короткого срока
+        return Response(
+            content=img.content,
+            media_type="image/jpeg",
+            headers={"Cache-Control": "private, max-age=300"},
+        )
     finally:
         db.close()
 

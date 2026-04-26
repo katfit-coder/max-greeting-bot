@@ -1038,11 +1038,7 @@ def process_due_scheduled(db: Session, max_client: MaxClient) -> dict:
                 subject = f"Поздравление: {item.custom_occasion or OCCASION_LABELS.get(item.occasion, item.occasion or '')}"
                 send_greeting_email(item.recipient_contact, subject, item.text, img_bytes)
             else:
-                img_url = None
-                if item.image_id:
-                    base = (settings.public_base_url or "").rstrip("/")
-                    if base:
-                        img_url = f"{base}/image/{item.image_id}.jpg"
+                img_url = _image_url_for(item.image_id, db)
                 max_client.send_message(int(item.recipient_contact), item.text, image_url=img_url)
             item.status = "sent"
             item.sent_at = now_utc
@@ -1132,9 +1128,7 @@ def _show_history(st: UserState, db: Session, max_client: MaxClient) -> None:
         details.append("")
         details.append(it.text or "—")
 
-        img_url = None
-        if it.image_id and base:
-            img_url = f"{base}/image/{it.image_id}.jpg"
+        img_url = _image_url_for(it.image_id, db)
         max_client.send_message(st.chat_id, "\n".join(details), image_url=img_url)
 
     max_client.send_message(
@@ -1148,18 +1142,33 @@ def _show_history(st: UserState, db: Session, max_client: MaxClient) -> None:
 
 
 def _host_image(db: Session, binary: bytes) -> Optional[str]:
+    """Сохраняет картинку и возвращает URL с UUID — никогда не повторяется
+    между сессиями, защищает от кэша MAX-клиента."""
+    import uuid as _uuid
     base = (settings.public_base_url or "").rstrip("/")
     if not base:
         log.warning("PUBLIC_BASE_URL not set — cannot host image URL")
         return None
-    img = HostedImage(content=binary)
+    img = HostedImage(content=binary, uuid=_uuid.uuid4().hex)
     db.add(img)
     db.commit()
     db.refresh(img)
-    return f"{base}/image/{img.id}.jpg"
+    return f"{base}/image/{img.uuid}.jpg"
 
 
 def _latest_image_url(db: Session, binary: Optional[bytes]) -> Optional[str]:
     if not binary:
         return None
     return _host_image(db, binary)
+
+
+def _image_url_for(image_id: Optional[int], db: Session) -> Optional[str]:
+    """URL для картинки по её ID — предпочитает UUID, чтобы MAX-клиент не кэшировал между деплоями."""
+    base = (settings.public_base_url or "").rstrip("/")
+    if not image_id or not base:
+        return None
+    img = db.query(HostedImage).filter(HostedImage.id == image_id).first()
+    if not img:
+        return None
+    key = img.uuid or str(img.id)
+    return f"{base}/image/{key}.jpg"

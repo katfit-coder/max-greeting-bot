@@ -7,12 +7,12 @@ import hashlib
 OCCASIONS_CONFIG = [
     # Всегда доступные (личные/рабочие)
     ("birthday", "🎂 День рождения", None),
-    ("thanks", "🙏 Благодарность коллеге", None),
+    ("thanks", "Благодарность", None),
     ("promotion", "📈 Повышение", None),
-    ("work_anniversary", "🏆 Рабочий юбилей", None),
+    ("work_anniversary", "🏆 Юбилей", None),
     ("new_colleague", "🤝 Новый коллега", None),
     ("project_success", "🚀 Успех проекта", None),
-    ("motivation", "☀️ Мотивация коллегам", None),
+    ("motivation", "☀️ Мотивация", None),
     # Государственные праздники РФ
     ("new_year", "🎄 Новый год", ((12, 1), (1, 14))),
     ("mar8", "🌷 8 марта", ((2, 15), (3, 10))),
@@ -36,7 +36,7 @@ OCCASIONS_CONFIG = [
 STYLES = [
     ("official", "📌 Официальный"),
     ("warm", "☀️ Тёплый"),
-    ("corporate", "💼 Корпоративный"),
+    ("corporate", "Корпоративный"),
     ("humor", "😜 С юмором"),
     ("friendly", "😊 Дружеский"),
 ]

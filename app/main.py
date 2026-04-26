@@ -104,7 +104,7 @@ def health():
 
 @app.get("/version")
 def version():
-    return {"build": "2026-04-25-v20-no-ps"}
+    return {"build": "2026-04-25-v21-postgres-ready"}
 
 
 def _process_update_in_bg(update: dict) -> None:

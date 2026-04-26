@@ -104,7 +104,7 @@ def health():
 
 @app.get("/version")
 def version():
-    return {"build": "2026-04-26-v23-qa-fixes"}
+    return {"build": "2026-04-26-v24-split-regen-messages"}
 
 
 def _process_update_in_bg(update: dict) -> None:

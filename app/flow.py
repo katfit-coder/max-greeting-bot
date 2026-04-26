@@ -833,8 +833,15 @@ def _regen_text(
     st.generated_text = text
     db.commit()
     image_url = _ensure_image_url(db, st)
-    caption = f"📝 Новый вариант:\n\n{text}"
-    max_client.send_message(st.chat_id, caption, buttons=_preview_buttons(), image_url=image_url)
+    # Разделяем длинный текст и картинку с кнопками — иначе MAX отклоняет 400 "Failed to upload image".
+    max_client.send_message(st.chat_id, f"📝 Новый вариант:\n\n{text}")
+    if image_url:
+        max_client.send_message(
+            st.chat_id, "✅ Картинка к этому тексту:",
+            buttons=_preview_buttons(), image_url=image_url,
+        )
+    else:
+        max_client.send_message(st.chat_id, "Что дальше?", buttons=_preview_buttons())
 
 
 def _regen_image(
@@ -877,9 +884,15 @@ def _regen_image(
     st.generated_image_uuid = ""
     db.commit()
     image_url = _ensure_image_url(db, st)
+    # Разделяем сообщения: длинный caption + картинка одновременно MAX иногда отклоняет
+    # с "Failed to upload image". Короткий caption работает стабильно.
     max_client.send_message(
         st.chat_id,
         f"🎨 Новая открытка к тому же тексту:\n\n{st.generated_text}",
+    )
+    max_client.send_message(
+        st.chat_id,
+        "✅ Готово:",
         buttons=_preview_buttons(),
         image_url=image_url,
     )

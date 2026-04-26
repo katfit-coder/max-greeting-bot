@@ -104,7 +104,7 @@ def health():
 
 @app.get("/version")
 def version():
-    return {"build": "2026-04-25-v19-verified-facts-from-wiki"}
+    return {"build": "2026-04-25-v20-no-ps"}
 
 
 def _process_update_in_bg(update: dict) -> None:

@@ -34,11 +34,11 @@ OCCASIONS_CONFIG = [
 ]
 
 STYLES = [
-    ("official", "Официальный"),
-    ("warm", "Тёплый / семейный"),
-    ("corporate", "Корпоративный"),
-    ("humor", "С юмором"),
-    ("friendly", "Дружеский"),
+    ("official", "📌 Официальный"),
+    ("warm", "☀️ Тёплый"),
+    ("corporate", "💼 Корпоративный"),
+    ("humor", "😜 С юмором"),
+    ("friendly", "😊 Дружеский"),
 ]
 
 OCCASION_LABELS = {k: label for k, label, _ in OCCASIONS_CONFIG}

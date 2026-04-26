@@ -57,10 +57,15 @@ class MaxClient:
                     headers=self._headers(),
                     json=payload,
                 )
+                if r.status_code >= 400:
+                    log.error(
+                        "MAX send_message %s: chat_id=%s body=%s payload=%s",
+                        r.status_code, chat_id, r.text[:500], payload,
+                    )
                 r.raise_for_status()
                 return r.json()
         except Exception as e:
-            log.error(f"MAX send_message failed: chat_id={chat_id}, error={e}", exc_info=True)
+            log.error(f"MAX send_message failed: chat_id={chat_id}, error={e}", exc_info=False)
             raise
 
     def answer_callback(self, callback_id: str, notification: str = "") -> dict:

@@ -104,7 +104,7 @@ def health():
 
 @app.get("/version")
 def version():
-    return {"build": "2026-04-25-v22-uuid-image-urls"}
+    return {"build": "2026-04-26-v23-qa-fixes"}
 
 
 def _process_update_in_bg(update: dict) -> None:
@@ -125,7 +125,16 @@ def _process_update_in_bg(update: dict) -> None:
 
 @app.post("/webhook")
 async def webhook(request: Request, bg: BackgroundTasks):
-    update = await request.json()
+    # Если MAX вдруг прислал не-JSON (битый прокси, отладочный пинг и т.п.) —
+    # отвечаем 200 с {"ok":false}, чтобы MAX не повторял; не валимся в 500.
+    try:
+        update = await request.json()
+    except Exception as e:
+        log.warning("webhook received non-JSON body: %s", e)
+        return {"ok": False, "reason": "invalid_json"}
+    if not isinstance(update, dict):
+        log.warning("webhook payload not an object: %r", type(update).__name__)
+        return {"ok": False, "reason": "invalid_payload"}
     RECENT_UPDATES.append(update)
     log.info("webhook update: type=%s", update.get("update_type"))
     if not app.state.max_client:

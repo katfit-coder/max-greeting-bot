@@ -180,6 +180,21 @@ def _extract_display_name(update: dict) -> str:
     return ""
 
 
+def _reset_flow(st: UserState) -> None:
+    """Сбрасывает все поля текущего флоу. Не трогает user_id/chat_id/display_name/history."""
+    st.occasion = ""
+    st.custom_occasion = ""
+    st.style = ""
+    st.extra_wish = ""
+    st.recipient_info = ""
+    st.generated_text = ""
+    st.generated_image = None
+    st.generated_image_uuid = ""
+    st.schedule_mode = 0
+    st.scheduled_at = None
+    st.channel = ""
+
+
 def _get_or_create_state(db: Session, user_id: int, chat_id: int, display_name: str = "") -> UserState:
     st = db.query(UserState).filter(UserState.user_id == user_id).first()
     if not st:
@@ -225,10 +240,10 @@ def _handle_bot_started(update: dict, db: Session, max_client: MaxClient) -> Non
     existing = db.query(UserState).filter(UserState.user_id == user_id).first()
     is_first_time = existing is None
     st = _get_or_create_state(db, user_id, chat_id, display_name=_extract_display_name(update))
-    st.step = "choose_occasion"
-    db.commit()
 
     if is_first_time:
+        st.step = "choose_occasion"
+        db.commit()
         max_client.send_message(
             chat_id,
             "👋 Привет! Я бот-помощник в создании поздравлений по любому поводу.\n\n"
@@ -238,18 +253,45 @@ def _handle_bot_started(update: dict, db: Session, max_client: MaxClient) -> Non
             "• отправлять поздравление в MAX, на email или планировать на дату\n"
             "• хранить историю всех твоих отправок\n\n"
             "📌 Несколько простых правил, чтобы я не путался:\n"
-            "1. После нажатия кнопки *подожди ответ* — генерация может занимать до минуты.\n"
+            "1. После нажатия кнопки подожди ответ — генерация может занимать до минуты.\n"
             "2. Не нажимай несколько кнопок подряд, особенно из старых сообщений.\n"
-            "3. Если что-то пошло не так — нажми «Отмена» или жми кнопку «Начать заново».\n\n"
+            "3. Если что-то пошло не так — нажми «Отмена» или «Начать заново».\n\n"
             "Поехали! Выбери повод:",
             buttons=_occasion_buttons(),
         )
-    else:
+        return
+
+    # Возвращающийся пользователь.
+    # Если он находится посреди flow (не idle и не after_send) — НЕ сбрасываем,
+    # просто предлагаем продолжить или начать заново.
+    active_steps = {
+        "await_custom_occasion", "await_recipient_info", "choose_style",
+        "await_extra_wish", "preview", "choose_channel",
+        "await_schedule_datetime", "await_contact",
+    }
+    if st.step in active_steps:
         max_client.send_message(
             chat_id,
-            "👋 С возвращением! Выбери повод для нового поздравления:",
-            buttons=_occasion_buttons(),
+            "👋 С возвращением! У тебя осталось незавершённое поздравление.\n"
+            "Используй кнопки ниже или дождись подсказки в предыдущих сообщениях.",
+            buttons=[
+                [{"type": "callback", "text": "🆕 Начать заново", "payload": "restart"}],
+                [
+                    {"type": "callback", "text": "📜 История", "payload": "history"},
+                    {"type": "callback", "text": "🚫 Сбросить", "payload": "cancel"},
+                ],
+            ],
         )
+        return
+
+    # idle / after_send — обычный сценарий выбора нового повода
+    st.step = "choose_occasion"
+    db.commit()
+    max_client.send_message(
+        chat_id,
+        "👋 С возвращением! Выбери повод для нового поздравления:",
+        buttons=_occasion_buttons(),
+    )
 
 
 def _extract_from(obj: dict) -> tuple[Optional[int], Optional[int]]:
@@ -286,22 +328,6 @@ def _extract_from(obj: dict) -> tuple[Optional[int], Optional[int]]:
             or obj.get("user_id")
         )
     return chat_id, user_id
-
-
-def _extract_shared_contact(msg: dict) -> Optional[dict]:
-    """Если в сообщении есть прикреплённый контакт — извлечь его данные.
-    Возвращает {user_id, name, phone, has_bot} или None."""
-    attachments = (msg.get("body") or {}).get("attachments") or []
-    for att in attachments:
-        if att.get("type") == "contact":
-            payload = att.get("payload") or {}
-            return {
-                "user_id": payload.get("user_id") or payload.get("contact_id"),
-                "name": payload.get("name") or payload.get("first_name") or "",
-                "phone": payload.get("phone") or "",
-                "has_bot": payload.get("has_bot", False),
-            }
-    return None
 
 
 def _handle_message(
@@ -398,21 +424,6 @@ def _handle_message(
         return
 
     if st.step == "await_contact":
-        # MAX: получили прикреплённый контакт через нативный picker
-        contact = _extract_shared_contact(msg)
-        if contact and st.channel in ("max", "max_contact"):
-            target = contact.get("user_id")
-            name = contact.get("name") or "получатель"
-            if not target:
-                max_client.send_message(
-                    chat_id,
-                    f"❌ Контакт {name} не привязан к MAX-аккаунту (есть только телефон). "
-                    "Пересылка боту через MAX невозможна — выбери другого получателя или email.",
-                )
-                return
-            _send_final(st, str(target), db, max_client, recipient_label=name)
-            return
-
         if st.channel == "email":
             if not EMAIL_RE.match(text):
                 max_client.send_message(chat_id, "❌ Похоже, это не email. Введи адрес вида name@domain.ru")
@@ -425,12 +436,6 @@ def _handle_message(
                 max_client.send_message(chat_id, "❌ Для MAX укажи числовой chat_id получателя. Для демо можно отправить самому себе — твой chat_id: " + str(chat_id))
                 return
             _send_final(st, str(target_chat_id), db, max_client)
-        elif st.channel == "max_contact":
-            # пользователь начал писать текст вместо использования кнопки
-            max_client.send_message(
-                chat_id,
-                "Используй кнопку «📲 Выбрать получателя» из предыдущего сообщения, чтобы открыть список контактов MAX.",
-            )
         return
 
     if text.lower().startswith("/"):
@@ -441,14 +446,23 @@ def _handle_message(
         )
         return
 
-    # любой другой текст в idle → показываем главное меню
-    st.step = "choose_occasion"
-    db.commit()
-    max_client.send_message(
-        chat_id,
-        "Давай соберём поздравление. Выбери повод:",
-        buttons=_occasion_buttons(),
-    )
+    # Текст в шаге, где не ждём текстового ввода — НЕ сбрасываем диалог.
+    # Если человек в idle/after_send — показываем меню (это первая фраза в новой сессии).
+    # В остальных шагах — мягко напоминаем, что ждём кнопку.
+    if st.step in ("idle", "after_send", ""):
+        st.step = "choose_occasion"
+        db.commit()
+        max_client.send_message(
+            chat_id,
+            "Давай соберём поздравление. Выбери повод:",
+            buttons=_occasion_buttons(),
+        )
+    else:
+        max_client.send_message(
+            chat_id,
+            "Я сейчас жду нажатия кнопки из предыдущего сообщения. Если хочешь сменить курс — нажми «🚫 Отмена» или «🆕 Начать заново».",
+            buttons=_quick_actions(),
+        )
 
 
 def _handle_callback(
@@ -461,6 +475,9 @@ def _handle_callback(
     if not chat_id or not user_id:
         return
     st = _get_or_create_state(db, user_id, chat_id, display_name=_extract_display_name(update))
+    # answer_callback должен идти ПЕРЕД проверкой stale: иначе у пользователя в MAX
+    # висит лоадер на кнопке, пока мы пишем сообщение об ошибке. Подтверждаем нажатие
+    # сразу — это убирает спиннер, дальше уже решаем, что показать.
     max_client.answer_callback(callback_id)
 
     # Защита от кликов по старым кнопкам: callback должен соответствовать текущему шагу.
@@ -532,14 +549,8 @@ def _handle_callback(
         return
 
     if payload == "restart":
+        _reset_flow(st)
         st.step = "choose_occasion"
-        st.occasion = ""
-        st.custom_occasion = ""
-        st.style = ""
-        st.extra_wish = ""
-        st.recipient_info = ""
-        st.generated_text = ""
-        st.generated_image = None
         db.commit()
         max_client.send_message(chat_id, "🆕 Новое поздравление. Выбери повод:", buttons=_occasion_buttons())
         return
@@ -642,12 +653,8 @@ def _handle_callback(
         if not st.generated_text:
             max_client.send_message(chat_id, "⚠️ Нечего сохранять — поздравление ещё не сгенерировано.", buttons=_quick_actions())
             return
-        img_id = None
-        if st.generated_image:
-            hosted = HostedImage(content=st.generated_image)
-            db.add(hosted)
-            db.flush()
-            img_id = hosted.id
+        # переиспользуем уже захостенную картинку, если есть, чтобы не плодить копии
+        img_id = _ensure_hosted_image_id(db, st)
         db.add(SentGreeting(
             user_id=st.user_id,
             sender_user_id=st.user_id,
@@ -662,6 +669,9 @@ def _handle_callback(
             has_image=1 if st.generated_image else 0,
             image_id=img_id,
         ))
+        # сбрасываем флаги планирования — после save_only не должно остаться расписания
+        st.schedule_mode = 0
+        st.scheduled_at = None
         st.step = "after_send"
         db.commit()
         max_client.send_message(
@@ -771,7 +781,11 @@ def _generate_and_preview(
         if img is not None:
             st.generated_image = img.binary
             db.commit()
-            image_url = _host_image(db, img.binary)
+            res = _host_image(db, img.binary)
+            if res:
+                _id, img_uuid, image_url = res
+                st.generated_image_uuid = img_uuid
+                db.commit()
     except Exception as e:
         log.warning("image gen failed: %s", e)
         max_client.send_message(
@@ -818,7 +832,7 @@ def _regen_text(
         return
     st.generated_text = text
     db.commit()
-    image_url = _latest_image_url(db, st.generated_image)
+    image_url = _ensure_image_url(db, st)
     caption = f"📝 Новый вариант:\n\n{text}"
     max_client.send_message(st.chat_id, caption, buttons=_preview_buttons(), image_url=image_url)
 
@@ -859,8 +873,10 @@ def _regen_image(
         max_client.send_message(st.chat_id, "⚠️ GigaChat не вернул изображение. Попробуй ещё раз.")
         return
     st.generated_image = img.binary
+    # Новая картинка — старый uuid инвалидируется, хостим новую и обновляем uuid в state
+    st.generated_image_uuid = ""
     db.commit()
-    image_url = _host_image(db, img.binary)
+    image_url = _ensure_image_url(db, st)
     max_client.send_message(
         st.chat_id,
         f"🎨 Новая открытка к тому же тексту:\n\n{st.generated_text}",
@@ -871,20 +887,20 @@ def _regen_image(
 
 def _send_final(st: UserState, contact: str, db: Session, max_client: MaxClient,
                 recipient_label: str = "") -> None:
+    # Человекочитаемое имя повода — для subject и логов
+    occasion_human = st.custom_occasion or OCCASION_LABELS.get(st.occasion, st.occasion or "")
+
     # Если пользователь выбрал отложенную отправку — сохраняем, не шлём сейчас
     if st.schedule_mode and st.scheduled_at:
-        img_id = None
-        if st.generated_image:
-            hosted = HostedImage(content=st.generated_image)
-            db.add(hosted)
-            db.flush()
-            img_id = hosted.id
+        scheduled_at_utc = st.scheduled_at  # сохраняем для отображения, до сброса state
+        img_id = _ensure_hosted_image_id(db, st)
         db.add(ScheduledGreeting(
             user_id=st.user_id,
             chat_id=st.chat_id,
-            scheduled_at=st.scheduled_at,
+            scheduled_at=scheduled_at_utc,
             channel=st.channel,
             recipient_contact=contact,
+            recipient_label=recipient_label or "",
             text=st.generated_text,
             image_id=img_id,
             occasion=st.occasion or "",
@@ -894,11 +910,14 @@ def _send_final(st: UserState, contact: str, db: Session, max_client: MaxClient,
         ))
         st.step = "after_send"
         st.schedule_mode = 0
+        st.scheduled_at = None
         db.commit()
-        when = _utc_to_msk(st.scheduled_at).strftime("%d.%m.%Y %H:%M")
+        when_msk = _utc_to_msk(scheduled_at_utc).strftime("%d.%m.%Y %H:%M")
+        channel_human = "MAX" if st.channel.startswith("max") or st.channel == "bot_user" else "email"
+        recipient_show = f"{recipient_label} ({contact})" if recipient_label else contact
         max_client.send_message(
             st.chat_id,
-            f"✅ Поздравление запланировано на {when} МСК → отправка в {('MAX' if st.channel.startswith('max') or st.channel=='bot_user' else 'email')}: {contact}.\n\n"
+            f"✅ Поздравление запланировано на {when_msk} МСК → отправка в {channel_human}: {recipient_show}.\n\n"
             "Оно уйдёт автоматически. Список запланированных — кнопкой «Запланированные».\n\n"
             "Хочешь ещё что-то собрать или закончить?",
             buttons=_after_send_buttons(),
@@ -907,11 +926,11 @@ def _send_final(st: UserState, contact: str, db: Session, max_client: MaxClient,
 
     try:
         if st.channel == "email":
-            subject = f"Поздравление: {OCCASION_LABELS.get(st.occasion, st.occasion)}"
+            subject = f"Поздравление: {occasion_human}"
             send_greeting_email(contact, subject, st.generated_text, st.generated_image)
             confirm = f"✅ Поздравление отправлено на {contact}"
         else:
-            image_url = _latest_image_url(db, st.generated_image)
+            image_url = _ensure_image_url(db, st)
             max_client.send_message(int(contact), st.generated_text, image_url=image_url)
             who = recipient_label or f"chat_id={contact}"
             confirm = f"✅ Поздравление отправлено в MAX → {who}"
@@ -922,12 +941,7 @@ def _send_final(st: UserState, contact: str, db: Session, max_client: MaxClient,
         max_client.send_message(st.chat_id, f"❌ Не удалось отправить: {_short(e)}")
         return
 
-    img_id = None
-    if st.generated_image:
-        hosted = HostedImage(content=st.generated_image)
-        db.add(hosted)
-        db.flush()
-        img_id = hosted.id
+    img_id = _ensure_hosted_image_id(db, st)
     db.add(SentGreeting(
         user_id=st.user_id,
         sender_user_id=st.user_id,
@@ -1012,7 +1026,11 @@ def _show_scheduled(st: UserState, db: Session, max_client: MaxClient) -> None:
         occ = it.custom_occasion or OCCASION_LABELS.get(it.occasion, it.occasion or "—")
         when = _utc_to_msk(it.scheduled_at).strftime("%d.%m.%Y %H:%M")
         ch = "MAX" if it.channel.startswith("max") or it.channel == "bot_user" else "email"
-        lines.append(f"• {when} МСК → {ch}: {it.recipient_contact} ({occ})")
+        recipient_show = (
+            f"{it.recipient_label} ({it.recipient_contact})"
+            if it.recipient_label else it.recipient_contact
+        )
+        lines.append(f"• {when} МСК → {ch}: {recipient_show} ({occ})")
     max_client.send_message(st.chat_id, "\n".join(lines))
 
 
@@ -1060,10 +1078,14 @@ def process_due_scheduled(db: Session, max_client: MaxClient) -> dict:
                 image_id=item.image_id,
             ))
             # уведомляем отправителя
+            recipient_show = (
+                f"{item.recipient_label} ({item.recipient_contact})"
+                if item.recipient_label else item.recipient_contact
+            )
             try:
                 max_client.send_message(
                     item.chat_id,
-                    f"📤 Запланированное поздравление ({_utc_to_msk(item.scheduled_at).strftime('%d.%m %H:%M')} МСК) успешно отправлено → {item.recipient_contact}",
+                    f"📤 Запланированное поздравление ({_utc_to_msk(item.scheduled_at).strftime('%d.%m %H:%M')} МСК) успешно отправлено → {recipient_show}",
                 )
             except Exception:
                 pass
@@ -1071,10 +1093,14 @@ def process_due_scheduled(db: Session, max_client: MaxClient) -> dict:
             item.status = "failed"
             item.error = str(e)[:500]
             failed += 1
+            recipient_show = (
+                f"{item.recipient_label} ({item.recipient_contact})"
+                if item.recipient_label else item.recipient_contact
+            )
             try:
                 max_client.send_message(
                     item.chat_id,
-                    f"⚠️ Не удалось отправить запланированное поздравление на {item.recipient_contact}: {str(e)[:150]}",
+                    f"⚠️ Не удалось отправить запланированное поздравление на {recipient_show}: {str(e)[:150]}",
                 )
             except Exception:
                 pass
@@ -1092,6 +1118,9 @@ def _show_history(st: UserState, db: Session, max_client: MaxClient) -> None:
         .all()
     )
     if not items:
+        # Кнопки поводов сразу — переключаем шаг, чтобы клик прошёл валидацию.
+        st.step = "choose_occasion"
+        db.commit()
         max_client.send_message(
             st.chat_id,
             "📜 История пуста. Отправь хотя бы одно поздравление — появится здесь.",
@@ -1101,6 +1130,14 @@ def _show_history(st: UserState, db: Session, max_client: MaxClient) -> None:
 
     max_client.send_message(st.chat_id, f"📜 Твои последние {len(items)} поздравлений:")
     base = (settings.public_base_url or "").rstrip("/")
+
+    # Предзагружаем все картинки одним запросом — избавляемся от N+1
+    image_ids = [it.image_id for it in items if it.image_id]
+    image_map: dict[int, HostedImage] = {}
+    if image_ids and base:
+        for h in db.query(HostedImage).filter(HostedImage.id.in_(image_ids)).all():
+            image_map[h.id] = h
+
     for it in items:
         occ_label = it.custom_occasion or OCCASION_LABELS.get(it.occasion, it.occasion or "—")
         style_label = STYLE_LABELS.get(it.style, it.style or "—")
@@ -1128,7 +1165,12 @@ def _show_history(st: UserState, db: Session, max_client: MaxClient) -> None:
         details.append("")
         details.append(it.text or "—")
 
-        img_url = _image_url_for(it.image_id, db)
+        img_url: Optional[str] = None
+        if it.image_id and base:
+            h = image_map.get(it.image_id)
+            if h:
+                key = h.uuid or str(h.id)
+                img_url = f"{base}/image/{key}.jpg"
         max_client.send_message(st.chat_id, "\n".join(details), image_url=img_url)
 
     max_client.send_message(
@@ -1141,9 +1183,9 @@ def _show_history(st: UserState, db: Session, max_client: MaxClient) -> None:
     )
 
 
-def _host_image(db: Session, binary: bytes) -> Optional[str]:
-    """Сохраняет картинку и возвращает URL с UUID — никогда не повторяется
-    между сессиями, защищает от кэша MAX-клиента."""
+def _host_image(db: Session, binary: bytes) -> Optional[tuple[int, str, str]]:
+    """Сохраняет картинку и возвращает (id, uuid, url). Используется при первой генерации.
+    URL содержит UUID — никогда не повторяется между сессиями, защищает от кэша MAX-клиента."""
     import uuid as _uuid
     base = (settings.public_base_url or "").rstrip("/")
     if not base:
@@ -1153,13 +1195,43 @@ def _host_image(db: Session, binary: bytes) -> Optional[str]:
     db.add(img)
     db.commit()
     db.refresh(img)
-    return f"{base}/image/{img.uuid}.jpg"
+    return (img.id, img.uuid, f"{base}/image/{img.uuid}.jpg")
 
 
-def _latest_image_url(db: Session, binary: Optional[bytes]) -> Optional[str]:
-    if not binary:
+def _ensure_hosted_image_id(db: Session, st: UserState) -> Optional[int]:
+    """Возвращает id уже захостенной картинки для st.generated_image_uuid.
+    Если она ещё не хостилась (legacy state без uuid) — хостит сейчас и обновляет state.
+    Возвращает None если картинки в state нет."""
+    if not st.generated_image:
         return None
-    return _host_image(db, binary)
+    if st.generated_image_uuid:
+        existing = db.query(HostedImage).filter(HostedImage.uuid == st.generated_image_uuid).first()
+        if existing:
+            return existing.id
+    # legacy fallback: захостить и запомнить
+    res = _host_image(db, st.generated_image)
+    if not res:
+        return None
+    img_id, img_uuid, _url = res
+    st.generated_image_uuid = img_uuid
+    db.commit()
+    return img_id
+
+
+def _ensure_image_url(db: Session, st: UserState) -> Optional[str]:
+    """URL для текущей картинки в state. Не плодит копии: если уже захостена с uuid — отдаёт тот же URL."""
+    base = (settings.public_base_url or "").rstrip("/")
+    if not st.generated_image or not base:
+        return None
+    if st.generated_image_uuid:
+        return f"{base}/image/{st.generated_image_uuid}.jpg"
+    res = _host_image(db, st.generated_image)
+    if not res:
+        return None
+    _id, img_uuid, url = res
+    st.generated_image_uuid = img_uuid
+    db.commit()
+    return url
 
 
 def _image_url_for(image_id: Optional[int], db: Session) -> Optional[str]:

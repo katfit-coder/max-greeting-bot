@@ -30,25 +30,16 @@ class MaxClient:
         image_bytes: Optional[bytes] = None,
         image_url: Optional[str] = None,
     ) -> dict:
-        """Отправляем сообщение в MAX. Если есть image_bytes — заливаем через /uploads
-        (штатный путь MAX); если есть только image_url — пробуем по ссылке (fallback).
-        Длинный caption + image + keyboard MAX иногда отклоняет «Failed to upload image»,
-        поэтому caller-у лучше разносить длинный текст и картинку с кнопками на 2 сообщения."""
         import logging
         log = logging.getLogger("max_client")
         attachments = []
-
-        if image_bytes is not None:
+        # prefer URL attach (simpler + avoids MAX upload flow)
+        if image_url:
+            attachments.append({"type": "image", "payload": {"url": image_url}})
+        elif image_bytes is not None:
             token = self._upload_image(image_bytes)
             if token:
                 attachments.append({"type": "image", "payload": {"token": token}})
-            elif image_url:
-                # upload через MAX не получился — пробуем по URL
-                log.warning("MAX upload failed, falling back to image_url")
-                attachments.append({"type": "image", "payload": {"url": image_url}})
-        elif image_url:
-            attachments.append({"type": "image", "payload": {"url": image_url}})
-
         if buttons:
             attachments.append({
                 "type": "inline_keyboard",
@@ -88,54 +79,28 @@ class MaxClient:
             return r.json() if r.status_code < 400 else {"error": r.text}
 
     def _upload_image(self, binary: bytes) -> Optional[str]:
-        """Двухшаговая загрузка картинки в MAX:
-        1. POST /uploads?type=image → {url}
-        2. POST <url> с multipart-файлом → {token}
-        Возвращает token, если всё ок, иначе None."""
-        import logging
-        log = logging.getLogger("max_client")
-        try:
-            with httpx.Client(timeout=60) as c:
-                r = c.post(
-                    self._url("/uploads"),
-                    params={"type": "image"},
-                    headers=self._headers(with_content_type=False),
-                )
-                if r.status_code >= 400:
-                    log.warning("MAX /uploads failed: %s %s", r.status_code, r.text[:300])
-                    return None
-                data = r.json()
-                upload_url = data.get("url")
-                if not upload_url:
-                    log.warning("MAX /uploads no url in response: %s", data)
-                    return None
-
-                up = c.post(
-                    upload_url,
-                    files={"data": ("card.jpg", binary, "image/jpeg")},
-                )
-                if up.status_code >= 400:
-                    log.warning("MAX upload binary failed: %s %s", up.status_code, up.text[:300])
-                    return None
-
-                # Ответ может быть в нескольких форматах — пробуем все варианты
-                try:
-                    j = up.json()
-                except Exception:
-                    log.warning("MAX upload returned non-JSON: %s", up.text[:300])
-                    return None
-
-                token = (
-                    j.get("token")
-                    or (j.get("photos") or {}).get("photo_id")
-                    or (j.get("data") or {}).get("token")
-                )
-                if not token:
-                    log.warning("MAX upload: no token in response: %s", j)
-                return token
-        except Exception as e:
-            log.warning("MAX _upload_image exception: %s", e)
-            return None
+        """Two-step upload: get upload URL, POST binary, return token."""
+        with httpx.Client(timeout=60) as c:
+            r = c.post(
+                self._url("/uploads"),
+                params={"type": "image"},
+                headers=self._headers(),
+            )
+            if r.status_code >= 400:
+                return None
+            data = r.json()
+            upload_url = data.get("url")
+            if not upload_url:
+                return None
+            up = c.post(upload_url, files={"data": ("card.jpg", binary, "image/jpeg")})
+            if up.status_code >= 400:
+                return None
+            try:
+                j = up.json()
+                token = j.get("token") or j.get("photos", {}).get("photo_id")
+            except Exception:
+                token = None
+            return token
 
     def subscribe_webhook(self, url: str) -> dict:
         with httpx.Client(timeout=15) as c:

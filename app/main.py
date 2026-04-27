@@ -104,7 +104,7 @@ def health():
 
 @app.get("/version")
 def version():
-    return {"build": "2026-04-25-v22-uuid-image-urls"}
+    return {"build": "2026-04-27-v22-stable-max-upload"}
 
 
 def _process_update_in_bg(update: dict) -> None:

@@ -819,8 +819,13 @@ def _regen_text(
     st.generated_text = text
     db.commit()
     image_url = _latest_image_url(db, st.generated_image)
-    caption = f"📝 Новый вариант:\n\n{text}"
-    max_client.send_message(st.chat_id, caption, buttons=_preview_buttons(), image_url=image_url)
+    # Сначала текст отдельным сообщением, потом картинка с кнопками и коротким caption.
+    # Объединять длинный текст + картинку MAX отклоняет 400 «Failed to upload image».
+    max_client.send_message(st.chat_id, f"📝 Новый вариант:\n\n{text}")
+    if image_url:
+        max_client.send_message(st.chat_id, "✅ Открытка та же:", buttons=_preview_buttons(), image_url=image_url)
+    else:
+        max_client.send_message(st.chat_id, "Что дальше?", buttons=_preview_buttons())
 
 
 def _regen_image(
@@ -861,9 +866,10 @@ def _regen_image(
     st.generated_image = img.binary
     db.commit()
     image_url = _host_image(db, img.binary)
+    # Короткий caption — иначе MAX отклоняет 400 при картинке с длинным текстом.
     max_client.send_message(
         st.chat_id,
-        f"🎨 Новая открытка к тому же тексту:\n\n{st.generated_text}",
+        "🎨 Новая открытка:",
         buttons=_preview_buttons(),
         image_url=image_url,
     )

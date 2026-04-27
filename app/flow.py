@@ -793,6 +793,7 @@ def _generate_and_preview(
         st.chat_id,
         "✅ Открытка готова:",
         buttons=_preview_buttons(),
+        image_bytes=st.generated_image,
         image_url=image_url,
     )
 
@@ -822,8 +823,11 @@ def _regen_text(
     # Сначала текст отдельным сообщением, потом картинка с кнопками и коротким caption.
     # Объединять длинный текст + картинку MAX отклоняет 400 «Failed to upload image».
     max_client.send_message(st.chat_id, f"📝 Новый вариант:\n\n{text}")
-    if image_url:
-        max_client.send_message(st.chat_id, "✅ Открытка та же:", buttons=_preview_buttons(), image_url=image_url)
+    if st.generated_image or image_url:
+        max_client.send_message(
+            st.chat_id, "✅ Открытка та же:", buttons=_preview_buttons(),
+            image_bytes=st.generated_image, image_url=image_url,
+        )
     else:
         max_client.send_message(st.chat_id, "Что дальше?", buttons=_preview_buttons())
 
@@ -871,6 +875,7 @@ def _regen_image(
         st.chat_id,
         "🎨 Новая открытка:",
         buttons=_preview_buttons(),
+        image_bytes=st.generated_image,
         image_url=image_url,
     )
 
@@ -918,7 +923,10 @@ def _send_final(st: UserState, contact: str, db: Session, max_client: MaxClient,
             confirm = f"✅ Поздравление отправлено на {contact}"
         else:
             image_url = _latest_image_url(db, st.generated_image)
-            max_client.send_message(int(contact), st.generated_text, image_url=image_url)
+            max_client.send_message(
+                int(contact), st.generated_text,
+                image_bytes=st.generated_image, image_url=image_url,
+            )
             who = recipient_label or f"chat_id={contact}"
             confirm = f"✅ Поздравление отправлено в MAX → {who}"
     except EmailError as e:
@@ -1045,7 +1053,15 @@ def process_due_scheduled(db: Session, max_client: MaxClient) -> dict:
                 send_greeting_email(item.recipient_contact, subject, item.text, img_bytes)
             else:
                 img_url = _image_url_for(item.image_id, db)
-                max_client.send_message(int(item.recipient_contact), item.text, image_url=img_url)
+                img_bytes_max = None
+                if item.image_id:
+                    h = db.query(HostedImage).filter(HostedImage.id == item.image_id).first()
+                    if h:
+                        img_bytes_max = h.content
+                max_client.send_message(
+                    int(item.recipient_contact), item.text,
+                    image_bytes=img_bytes_max, image_url=img_url,
+                )
             item.status = "sent"
             item.sent_at = now_utc
             sent += 1

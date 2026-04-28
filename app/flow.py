@@ -1152,8 +1152,21 @@ def _show_history(st: UserState, db: Session, max_client: MaxClient) -> None:
         details.append("")
         details.append(it.text or "—")
 
-        img_url = _image_url_for(it.image_id, db)
-        max_client.send_message(st.chat_id, "\n".join(details), image_url=img_url)
+        # Берём и URL, и байты — MAX надёжнее принимает картинку через upload (image_bytes).
+        img_url = None
+        img_bytes = None
+        if it.image_id:
+            h = db.query(HostedImage).filter(HostedImage.id == it.image_id).first()
+            if h:
+                img_bytes = h.content
+                base = (settings.public_base_url or "").rstrip("/")
+                if base:
+                    key = h.uuid or str(h.id)
+                    img_url = f"{base}/image/{key}.jpg"
+        max_client.send_message(
+            st.chat_id, "\n".join(details),
+            image_bytes=img_bytes, image_url=img_url,
+        )
 
     max_client.send_message(
         st.chat_id,

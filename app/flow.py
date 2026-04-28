@@ -644,7 +644,8 @@ def _handle_callback(
             return
         img_id = None
         if st.generated_image:
-            hosted = HostedImage(content=st.generated_image)
+            import uuid as _uuid
+            hosted = HostedImage(content=st.generated_image, uuid=_uuid.uuid4().hex)
             db.add(hosted)
             db.flush()
             img_id = hosted.id
@@ -886,7 +887,8 @@ def _send_final(st: UserState, contact: str, db: Session, max_client: MaxClient,
     if st.schedule_mode and st.scheduled_at:
         img_id = None
         if st.generated_image:
-            hosted = HostedImage(content=st.generated_image)
+            import uuid as _uuid
+            hosted = HostedImage(content=st.generated_image, uuid=_uuid.uuid4().hex)
             db.add(hosted)
             db.flush()
             img_id = hosted.id
@@ -1134,7 +1136,7 @@ def _show_history(st: UserState, db: Session, max_client: MaxClient) -> None:
             "email": "email",
             "saved": "📦 только в истории",
         }.get(it.channel, it.channel or "—")
-        when = it.created_at.strftime("%d.%m.%Y %H:%M") if it.created_at else "—"
+        when = _utc_to_msk(it.created_at).strftime("%d.%m.%Y %H:%M") + " МСК" if it.created_at else "—"
 
         details = [f"🗓 {when}"]
         details.append(f"🎉 Повод: {occ_label}")
